@@ -39,7 +39,21 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PhotoSpeak needs access to your photos so you can pick one to describe in English."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "PhotoSpeak needs access to your photos so it can pick a random one for you to describe.",
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
