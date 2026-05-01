@@ -53,6 +53,12 @@
           "savePhotosPermission": false,
           "isAccessMediaLocationEnabled": false
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "PhotoSpeak needs your microphone so you can record yourself describing photos in English."
+        }
       ]
     ],
     "experiments": {

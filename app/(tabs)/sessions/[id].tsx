@@ -11,16 +11,23 @@ import {
   View,
 } from 'react-native';
 import { getSession } from '../../../src/db/sessions';
+import { useRecorder } from '../../../src/hooks/useAudioRecorder';
+import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
 import {
   pickFromLibrary,
   pickRandomFromLibrary,
   type PickerError,
   type PickerResult,
 } from '../../../src/storage/picker';
-import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
+import { persistRecording } from '../../../src/storage/recordings';
 import type { Session } from '../../../src/types';
 
 type Mode = 'loading' | 'new' | 'existing';
+
+interface SavedRecording {
+  uri: string;
+  durationMs: number;
+}
 
 export default function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,6 +35,10 @@ export default function SessionDetailScreen() {
   const [existingSession, setExistingSession] = useState<Session | null>(null);
   const [photo, setPhoto] = useState<SavedPhoto | null>(null);
   const [picking, setPicking] = useState(false);
+  const [recording, setRecording] = useState<SavedRecording | null>(null);
+  const [savingRecording, setSavingRecording] = useState(false);
+
+  const recorder = useRecorder();
 
   useEffect(() => {
     let cancelled = false;
@@ -68,9 +79,46 @@ export default function SessionDetailScreen() {
     }
   };
 
+  const handleRecordStart = async () => {
+    const ok = await recorder.start();
+    if (!ok) {
+      Alert.alert(
+        'Microphone access needed',
+        'Grant microphone access in Settings to continue.'
+      );
+    }
+  };
+
+  const handleRecordStop = async () => {
+    if (!recorder.isRecording) return;
+    const durationMs = recorder.durationMs;
+    setSavingRecording(true);
+    try {
+      const tmpUri = await recorder.stop();
+      if (!tmpUri) return;
+      const persistedUri = persistRecording(tmpUri, id);
+      setRecording({ uri: persistedUri, durationMs });
+    } catch (e) {
+      Alert.alert('Could not save recording', String(e));
+    } finally {
+      setSavingRecording(false);
+    }
+  };
+
+  const handleRetakePhoto = () => {
+    setPhoto(null);
+    setRecording(null);
+  };
+
+  const handleRetakeRecording = () => {
+    setRecording(null);
+  };
+
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: mode === 'new' ? 'New session' : 'Session' }} />
+      <Stack.Screen
+        options={{ title: mode === 'new' ? 'New session' : 'Session' }}
+      />
 
       {mode === 'loading' && (
         <View style={styles.center}>
@@ -114,22 +162,107 @@ export default function SessionDetailScreen() {
 
       {mode === 'new' && photo && (
         <View style={styles.previewContainer}>
-          <Image source={{ uri: photo.photo_uri }} style={styles.preview} contentFit="cover" />
-          <View style={styles.recordPlaceholder}>
-            <Ionicons name="mic-outline" size={28} color="#888" />
-            <Text style={styles.recordPlaceholderText}>
-              Hold to record (Step 4 — coming soon)
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => setPhoto(null)}
-            style={styles.retakeButton}
-            disabled={picking}
-          >
-            <Text style={styles.retakeText}>Choose a different photo</Text>
-          </Pressable>
+          <Image
+            source={{ uri: photo.photo_uri }}
+            style={styles.preview}
+            contentFit="cover"
+          />
+
+          {!recording ? (
+            <RecordingStage
+              isRecording={recorder.isRecording}
+              durationMs={recorder.durationMs}
+              busy={savingRecording}
+              onPressIn={handleRecordStart}
+              onPressOut={handleRecordStop}
+            />
+          ) : (
+            <RecordingDoneStage
+              durationMs={recording.durationMs}
+              onRetake={handleRetakeRecording}
+            />
+          )}
+
+          {!recorder.isRecording && (
+            <Pressable
+              onPress={handleRetakePhoto}
+              style={styles.retakeButton}
+              disabled={savingRecording}
+            >
+              <Text style={styles.retakeText}>Choose a different photo</Text>
+            </Pressable>
+          )}
         </View>
       )}
+    </View>
+  );
+}
+
+function RecordingStage({
+  isRecording,
+  durationMs,
+  busy,
+  onPressIn,
+  onPressOut,
+}: {
+  isRecording: boolean;
+  durationMs: number;
+  busy: boolean;
+  onPressIn: () => void;
+  onPressOut: () => void;
+}) {
+  return (
+    <View style={styles.recordContainer}>
+      <Text style={styles.timer}>{formatDuration(durationMs)}</Text>
+      <Pressable
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        disabled={busy}
+        style={({ pressed }) => [
+          styles.recordButton,
+          (isRecording || pressed) && styles.recordButtonActive,
+          busy && styles.buttonDisabled,
+        ]}
+      >
+        <Ionicons
+          name={isRecording ? 'stop' : 'mic'}
+          size={36}
+          color="#fff"
+        />
+      </Pressable>
+      <Text style={styles.recordHint}>
+        {busy
+          ? 'Saving…'
+          : isRecording
+            ? 'Release to stop'
+            : 'Press and hold to record'}
+      </Text>
+    </View>
+  );
+}
+
+function RecordingDoneStage({
+  durationMs,
+  onRetake,
+}: {
+  durationMs: number;
+  onRetake: () => void;
+}) {
+  return (
+    <View style={styles.recordContainer}>
+      <Text style={styles.recordedLabel}>
+        Recorded {formatDuration(durationMs)}
+      </Text>
+      <View
+        style={[styles.transcribeButton, styles.buttonDisabled]}
+        accessibilityRole="button"
+      >
+        <Ionicons name="sparkles-outline" size={18} color="#fff" />
+        <Text style={styles.buttonLabel}>Transcribe (Step 5)</Text>
+      </View>
+      <Pressable onPress={onRetake} style={styles.retakeButton}>
+        <Text style={styles.retakeText}>Re-record</Text>
+      </Pressable>
     </View>
   );
 }
@@ -174,6 +307,13 @@ function showPickerError(error: PickerError): void {
     Alert.alert('No photos found', 'Your library appears to be empty.');
     return;
   }
+}
+
+function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const mm = Math.floor(total / 60).toString().padStart(2, '0');
+  const ss = (total % 60).toString().padStart(2, '0');
+  return `${mm}:${ss}`;
 }
 
 const styles = StyleSheet.create({
@@ -243,20 +383,43 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#eee',
   },
-  recordPlaceholder: {
+  recordContainer: {
     marginTop: 24,
+    alignItems: 'center',
+    gap: 12,
+  },
+  timer: {
+    fontSize: 28,
+    fontVariant: ['tabular-nums'],
+    fontWeight: '500',
+  },
+  recordButton: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: '#0a84ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordButtonActive: {
+    backgroundColor: '#ff3b30',
+  },
+  recordHint: {
+    fontSize: 13,
+    opacity: 0.6,
+  },
+  recordedLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  transcribeButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 14,
+    backgroundColor: '#0a84ff',
     paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#bbb',
-  },
-  recordPlaceholderText: {
-    fontSize: 14,
-    color: '#666',
+    gap: 8,
   },
   retakeButton: {
     marginTop: 16,
