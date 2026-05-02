@@ -11,6 +11,11 @@ import {
   Text,
   View,
 } from 'react-native';
+import {
+  analyzeSession,
+  MimoError,
+  type AnalysisResult,
+} from '../../../src/api/mimo';
 import { transcribeAudio, WhisperError } from '../../../src/api/whisper';
 import { getSession } from '../../../src/db/sessions';
 import { useRecorder } from '../../../src/hooks/useAudioRecorder';
@@ -41,6 +46,8 @@ export default function SessionDetailScreen() {
   const [savingRecording, setSavingRecording] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   const recorder = useRecorder();
 
@@ -130,15 +137,34 @@ export default function SessionDetailScreen() {
     }
   };
 
+  const handleAnalyze = async () => {
+    if (!photo || !transcript) return;
+    setAnalyzing(true);
+    try {
+      const result = await analyzeSession({
+        photoUri: photo.photo_thumbnail_uri,
+        transcript,
+      });
+      setAnalysis(result);
+    } catch (e) {
+      const msg = e instanceof MimoError ? e.message : String(e);
+      Alert.alert('Analysis failed', msg);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   const handleRetakePhoto = () => {
     setPhoto(null);
     setRecording(null);
     setTranscript(null);
+    setAnalysis(null);
   };
 
   const handleRetakeRecording = () => {
     setRecording(null);
     setTranscript(null);
+    setAnalysis(null);
   };
 
   return (
@@ -191,7 +217,7 @@ export default function SessionDetailScreen() {
         <View style={styles.previewContainer}>
           <Image
             source={{ uri: photo.photo_uri }}
-            style={styles.preview}
+            style={analysis ? styles.previewSmall : styles.preview}
             contentFit="cover"
           />
 
@@ -205,9 +231,18 @@ export default function SessionDetailScreen() {
             />
           ) : transcribing ? (
             <TranscribingStage />
+          ) : analyzing ? (
+            <AnalyzingStage />
+          ) : analysis && transcript ? (
+            <AnalysisStage
+              transcript={transcript}
+              analysis={analysis}
+              onRetake={handleRetakeRecording}
+            />
           ) : transcript ? (
             <TranscriptStage
               transcript={transcript}
+              onAnalyze={handleAnalyze}
               onRetake={handleRetakeRecording}
             />
           ) : (
@@ -218,7 +253,7 @@ export default function SessionDetailScreen() {
             />
           )}
 
-          {!recorder.isRecording && !transcribing && (
+          {!recorder.isRecording && !transcribing && !analyzing && (
             <Pressable
               onPress={handleRetakePhoto}
               style={styles.retakeButton}
@@ -318,9 +353,11 @@ function TranscribingStage() {
 
 function TranscriptStage({
   transcript,
+  onAnalyze,
   onRetake,
 }: {
   transcript: string;
+  onAnalyze: () => void;
   onRetake: () => void;
 }) {
   return (
@@ -329,17 +366,107 @@ function TranscriptStage({
       <ScrollView style={styles.transcriptBubble}>
         <Text style={styles.transcriptText}>{transcript}</Text>
       </ScrollView>
-      <View
-        style={[styles.transcribeButton, styles.buttonDisabled]}
-        accessibilityRole="button"
+      <Pressable
+        onPress={onAnalyze}
+        style={({ pressed }) => [
+          styles.transcribeButton,
+          pressed && styles.buttonPressed,
+        ]}
       >
         <Ionicons name="sparkles-outline" size={18} color="#fff" />
-        <Text style={styles.buttonLabel}>Analyze (Step 6)</Text>
-      </View>
+        <Text style={styles.buttonLabel}>Analyze</Text>
+      </Pressable>
       <Pressable onPress={onRetake} style={styles.retakeButton}>
         <Text style={styles.retakeText}>Re-record</Text>
       </Pressable>
     </View>
+  );
+}
+
+function AnalyzingStage() {
+  return (
+    <View style={styles.recordContainer}>
+      <ActivityIndicator />
+      <Text style={styles.recordHint}>Analyzing…</Text>
+    </View>
+  );
+}
+
+function AnalysisStage({
+  transcript,
+  analysis,
+  onRetake,
+}: {
+  transcript: string;
+  analysis: AnalysisResult;
+  onRetake: () => void;
+}) {
+  return (
+    <ScrollView
+      style={styles.analysisOuter}
+      contentContainerStyle={styles.analysisInner}
+    >
+      <Text style={styles.transcriptLabel}>You said</Text>
+      <View style={styles.transcriptBubble}>
+        <Text style={styles.transcriptText}>{transcript}</Text>
+      </View>
+
+      {analysis.corrected_sentences.length > 0 && (
+        <>
+          <Text style={styles.transcriptLabel}>Corrections</Text>
+          {analysis.corrected_sentences.map((c, i) => (
+            <View key={i} style={styles.correctionCard}>
+              <Text style={styles.correctionOriginal}>“{c.original}”</Text>
+              <Text style={styles.correctionArrow}>↓</Text>
+              <Text style={styles.correctionFixed}>“{c.corrected}”</Text>
+              <Text style={styles.correctionMeta}>
+                {c.error_type}
+                {c.is_common_for_chinese_speakers ? ' · 中文母语者常见' : ''}
+              </Text>
+              {c.explanation ? (
+                <Text style={styles.correctionExplain}>{c.explanation}</Text>
+              ) : null}
+            </View>
+          ))}
+        </>
+      )}
+
+      <Text style={styles.transcriptLabel}>Polished version</Text>
+      <View style={styles.transcriptBubble}>
+        <Text style={styles.transcriptText}>
+          {analysis.polished_sentences.join(' ')}
+        </Text>
+      </View>
+
+      {analysis.chunks.length > 0 && (
+        <>
+          <Text style={styles.transcriptLabel}>Chunks to remember</Text>
+          {analysis.chunks.map((chunk) => (
+            <View key={chunk.id} style={styles.chunkCard}>
+              <Text style={styles.chunkPhrase}>{chunk.chunk}</Text>
+              {chunk.usage_note ? (
+                <Text style={styles.chunkNote}>{chunk.usage_note}</Text>
+              ) : null}
+              {chunk.examples.map((ex, i) => (
+                <Text key={i} style={styles.chunkExample}>
+                  · {ex.text}
+                </Text>
+              ))}
+            </View>
+          ))}
+        </>
+      )}
+
+      <View style={styles.analysisFooter}>
+        <View style={[styles.transcribeButton, styles.buttonDisabled]}>
+          <Ionicons name="sparkles-outline" size={18} color="#fff" />
+          <Text style={styles.buttonLabel}>Confirm & Generate (Step 9)</Text>
+        </View>
+        <Pressable onPress={onRetake} style={styles.retakeButton}>
+          <Text style={styles.retakeText}>Re-record</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -459,6 +586,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#eee',
   },
+  previewSmall: {
+    width: 120,
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: '#eee',
+  },
   recordContainer: {
     marginTop: 24,
     alignItems: 'center',
@@ -528,5 +661,73 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: '#222',
+  },
+  analysisOuter: {
+    flex: 1,
+    alignSelf: 'stretch',
+    marginTop: 16,
+  },
+  analysisInner: {
+    paddingBottom: 24,
+    gap: 8,
+  },
+  correctionCard: {
+    backgroundColor: '#fff8e1',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  correctionOriginal: {
+    fontSize: 14,
+    color: '#7f5a00',
+    fontStyle: 'italic',
+  },
+  correctionArrow: {
+    fontSize: 14,
+    color: '#7f5a00',
+    textAlign: 'center',
+  },
+  correctionFixed: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1b5e20',
+  },
+  correctionMeta: {
+    fontSize: 12,
+    opacity: 0.6,
+    marginTop: 4,
+  },
+  correctionExplain: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#444',
+    marginTop: 4,
+  },
+  chunkCard: {
+    backgroundColor: '#e3f2fd',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  chunkPhrase: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0d47a1',
+  },
+  chunkNote: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#444',
+    marginBottom: 4,
+  },
+  chunkExample: {
+    fontSize: 13,
+    color: '#222',
+    marginLeft: 4,
+  },
+  analysisFooter: {
+    marginTop: 12,
+    alignItems: 'center',
+    gap: 4,
   },
 });
