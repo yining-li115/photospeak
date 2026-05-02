@@ -1,4 +1,4 @@
-const ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
+const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
 const MODEL = 'whisper-1';
 
 export class WhisperError extends Error {
@@ -15,10 +15,14 @@ export async function transcribeAudio(
   recordingUri: string,
   options: { language?: string } = {}
 ): Promise<string> {
+  const endpoint =
+    process.env.EXPO_PUBLIC_WHISPER_ENDPOINT?.trim() || DEFAULT_ENDPOINT;
+  const isLocal = endpoint !== DEFAULT_ENDPOINT;
   const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-  if (!apiKey) {
+
+  if (!isLocal && !apiKey) {
     throw new WhisperError(
-      'EXPO_PUBLIC_OPENAI_API_KEY is not set. Add it to your .env file.'
+      'No Whisper endpoint configured. Set EXPO_PUBLIC_OPENAI_API_KEY for OpenAI, or EXPO_PUBLIC_WHISPER_ENDPOINT for a local server.'
     );
   }
 
@@ -33,11 +37,14 @@ export async function transcribeAudio(
   form.append('language', options.language ?? 'en');
   form.append('response_format', 'text');
 
-  const response = await fetch(ENDPOINT, {
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: form,
   });
 
