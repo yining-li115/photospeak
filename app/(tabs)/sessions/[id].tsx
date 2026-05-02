@@ -6,10 +6,12 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { transcribeAudio, WhisperError } from '../../../src/api/whisper';
 import { getSession } from '../../../src/db/sessions';
 import { useRecorder } from '../../../src/hooks/useAudioRecorder';
 import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
@@ -37,6 +39,8 @@ export default function SessionDetailScreen() {
   const [picking, setPicking] = useState(false);
   const [recording, setRecording] = useState<SavedRecording | null>(null);
   const [savingRecording, setSavingRecording] = useState(false);
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
 
   const recorder = useRecorder();
 
@@ -105,13 +109,36 @@ export default function SessionDetailScreen() {
     }
   };
 
+  const handleTranscribe = async () => {
+    if (!recording) return;
+    setTranscribing(true);
+    try {
+      const text = await transcribeAudio(recording.uri);
+      if (text.length === 0) {
+        Alert.alert(
+          'Empty transcript',
+          'Whisper returned no text. Try recording again with clearer audio.'
+        );
+        return;
+      }
+      setTranscript(text);
+    } catch (e) {
+      const msg = e instanceof WhisperError ? e.message : String(e);
+      Alert.alert('Transcription failed', msg);
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
   const handleRetakePhoto = () => {
     setPhoto(null);
     setRecording(null);
+    setTranscript(null);
   };
 
   const handleRetakeRecording = () => {
     setRecording(null);
+    setTranscript(null);
   };
 
   return (
@@ -176,14 +203,22 @@ export default function SessionDetailScreen() {
               onPressIn={handleRecordStart}
               onPressOut={handleRecordStop}
             />
+          ) : transcribing ? (
+            <TranscribingStage />
+          ) : transcript ? (
+            <TranscriptStage
+              transcript={transcript}
+              onRetake={handleRetakeRecording}
+            />
           ) : (
             <RecordingDoneStage
               durationMs={recording.durationMs}
+              onTranscribe={handleTranscribe}
               onRetake={handleRetakeRecording}
             />
           )}
 
-          {!recorder.isRecording && (
+          {!recorder.isRecording && !transcribing && (
             <Pressable
               onPress={handleRetakePhoto}
               style={styles.retakeButton}
@@ -243,9 +278,11 @@ function RecordingStage({
 
 function RecordingDoneStage({
   durationMs,
+  onTranscribe,
   onRetake,
 }: {
   durationMs: number;
+  onTranscribe: () => void;
   onRetake: () => void;
 }) {
   return (
@@ -253,12 +290,51 @@ function RecordingDoneStage({
       <Text style={styles.recordedLabel}>
         Recorded {formatDuration(durationMs)}
       </Text>
+      <Pressable
+        onPress={onTranscribe}
+        style={({ pressed }) => [
+          styles.transcribeButton,
+          pressed && styles.buttonPressed,
+        ]}
+      >
+        <Ionicons name="sparkles-outline" size={18} color="#fff" />
+        <Text style={styles.buttonLabel}>Transcribe</Text>
+      </Pressable>
+      <Pressable onPress={onRetake} style={styles.retakeButton}>
+        <Text style={styles.retakeText}>Re-record</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function TranscribingStage() {
+  return (
+    <View style={styles.recordContainer}>
+      <ActivityIndicator />
+      <Text style={styles.recordHint}>Transcribing…</Text>
+    </View>
+  );
+}
+
+function TranscriptStage({
+  transcript,
+  onRetake,
+}: {
+  transcript: string;
+  onRetake: () => void;
+}) {
+  return (
+    <View style={styles.transcriptContainer}>
+      <Text style={styles.transcriptLabel}>Transcript</Text>
+      <ScrollView style={styles.transcriptBubble}>
+        <Text style={styles.transcriptText}>{transcript}</Text>
+      </ScrollView>
       <View
         style={[styles.transcribeButton, styles.buttonDisabled]}
         accessibilityRole="button"
       >
         <Ionicons name="sparkles-outline" size={18} color="#fff" />
-        <Text style={styles.buttonLabel}>Transcribe (Step 5)</Text>
+        <Text style={styles.buttonLabel}>Analyze (Step 6)</Text>
       </View>
       <Pressable onPress={onRetake} style={styles.retakeButton}>
         <Text style={styles.retakeText}>Re-record</Text>
@@ -428,5 +504,29 @@ const styles = StyleSheet.create({
   retakeText: {
     color: '#0a84ff',
     fontSize: 14,
+  },
+  transcriptContainer: {
+    marginTop: 24,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: 12,
+  },
+  transcriptLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.7,
+    alignSelf: 'flex-start',
+  },
+  transcriptBubble: {
+    alignSelf: 'stretch',
+    maxHeight: 180,
+    backgroundColor: '#f1f3f5',
+    borderRadius: 12,
+    padding: 12,
+  },
+  transcriptText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#222',
   },
 });
