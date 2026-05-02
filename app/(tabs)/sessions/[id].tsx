@@ -406,56 +406,56 @@ function AnalysisStage({
       style={styles.analysisOuter}
       contentContainerStyle={styles.analysisInner}
     >
-      <Text style={styles.transcriptLabel}>You said</Text>
-      <View style={styles.transcriptBubble}>
-        <Text style={styles.transcriptText}>{transcript}</Text>
-      </View>
+      <UserBubble>
+        <Text style={styles.userBubbleText}>{transcript}</Text>
+      </UserBubble>
 
-      {analysis.corrected_sentences.length > 0 && (
-        <>
-          <Text style={styles.transcriptLabel}>Corrections</Text>
-          {analysis.corrected_sentences.map((c, i) => (
-            <View key={i} style={styles.correctionCard}>
-              <Text style={styles.correctionOriginal}>“{c.original}”</Text>
-              <Text style={styles.correctionArrow}>↓</Text>
-              <Text style={styles.correctionFixed}>“{c.corrected}”</Text>
-              <Text style={styles.correctionMeta}>
-                {c.error_type}
-                {c.is_common_for_chinese_speakers ? ' · 中文母语者常见' : ''}
-              </Text>
-              {c.explanation ? (
-                <Text style={styles.correctionExplain}>{c.explanation}</Text>
-              ) : null}
-            </View>
-          ))}
-        </>
-      )}
-
-      <Text style={styles.transcriptLabel}>Polished version</Text>
-      <View style={styles.transcriptBubble}>
-        <Text style={styles.transcriptText}>
-          {analysis.polished_sentences.join(' ')}
-        </Text>
-      </View>
-
-      {analysis.chunks.length > 0 && (
-        <>
-          <Text style={styles.transcriptLabel}>Chunks to remember</Text>
-          {analysis.chunks.map((chunk) => (
-            <View key={chunk.id} style={styles.chunkCard}>
-              <Text style={styles.chunkPhrase}>{chunk.chunk}</Text>
-              {chunk.usage_note ? (
-                <Text style={styles.chunkNote}>{chunk.usage_note}</Text>
-              ) : null}
-              {chunk.examples.map((ex, i) => (
-                <Text key={i} style={styles.chunkExample}>
-                  · {ex.text}
+      <AssistantBubble>
+        {analysis.corrected_sentences.length > 0 && (
+          <View style={styles.bubbleSection}>
+            <Text style={styles.bubbleSectionLabel}>Corrections</Text>
+            {analysis.corrected_sentences.map((c, i) => (
+              <View key={i} style={styles.bubbleSubBlock}>
+                <Text style={styles.bubbleStrike}>{c.original}</Text>
+                <Text style={styles.bubbleFixed}>→ {c.corrected}</Text>
+                <Text style={styles.bubbleMeta}>
+                  {c.error_type}
+                  {c.is_common_for_chinese_speakers ? ' · 常见错误' : ''}
                 </Text>
-              ))}
-            </View>
-          ))}
-        </>
-      )}
+                {c.explanation ? (
+                  <Text style={styles.bubbleNote}>{c.explanation}</Text>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        )}
+
+        <View style={styles.bubbleSection}>
+          <Text style={styles.bubbleSectionLabel}>Polished</Text>
+          <Text style={styles.bubbleText}>
+            {analysis.polished_sentences.join(' ')}
+          </Text>
+        </View>
+
+        {analysis.chunks.length > 0 && (
+          <View style={styles.bubbleSection}>
+            <Text style={styles.bubbleSectionLabel}>Chunks to remember</Text>
+            {analysis.chunks.map((chunk) => (
+              <View key={chunk.id} style={styles.bubbleSubBlock}>
+                <Text style={styles.bubbleChunk}>{chunk.chunk}</Text>
+                {chunk.usage_note ? (
+                  <Text style={styles.bubbleNote}>{chunk.usage_note}</Text>
+                ) : null}
+                {chunk.examples.map((ex, i) => (
+                  <Text key={i} style={styles.bubbleExample}>
+                    · {ex.text}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        )}
+      </AssistantBubble>
 
       <View style={styles.analysisFooter}>
         <View style={[styles.transcribeButton, styles.buttonDisabled]}>
@@ -467,6 +467,22 @@ function AnalysisStage({
         </Pressable>
       </View>
     </ScrollView>
+  );
+}
+
+function UserBubble({ children }: { children: React.ReactNode }) {
+  return (
+    <View style={styles.bubbleRowRight}>
+      <View style={[styles.bubble, styles.bubbleUser]}>{children}</View>
+    </View>
+  );
+}
+
+function AssistantBubble({ children }: { children: React.ReactNode }) {
+  return (
+    <View style={styles.bubbleRowLeft}>
+      <View style={[styles.bubble, styles.bubbleAssistant]}>{children}</View>
+    </View>
   );
 }
 
@@ -671,59 +687,79 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     gap: 8,
   },
-  correctionCard: {
-    backgroundColor: '#fff8e1',
-    borderRadius: 12,
+  bubbleRowRight: {
+    alignItems: 'flex-end',
+  },
+  bubbleRowLeft: {
+    alignItems: 'flex-start',
+  },
+  bubble: {
+    maxWidth: '85%',
     padding: 12,
-    gap: 4,
+    borderRadius: 16,
   },
-  correctionOriginal: {
+  bubbleUser: {
+    backgroundColor: '#0a84ff',
+    borderBottomRightRadius: 4,
+  },
+  bubbleAssistant: {
+    backgroundColor: '#f1f3f5',
+    borderBottomLeftRadius: 4,
+  },
+  userBubbleText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#fff',
+  },
+  bubbleText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#222',
+  },
+  bubbleSection: {
+    marginTop: 8,
+  },
+  bubbleSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    opacity: 0.55,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  bubbleSubBlock: {
+    marginTop: 6,
+  },
+  bubbleStrike: {
     fontSize: 14,
-    color: '#7f5a00',
-    fontStyle: 'italic',
+    color: '#888',
+    textDecorationLine: 'line-through',
   },
-  correctionArrow: {
-    fontSize: 14,
-    color: '#7f5a00',
-    textAlign: 'center',
-  },
-  correctionFixed: {
+  bubbleFixed: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1b5e20',
+    color: '#222',
+    marginTop: 2,
   },
-  correctionMeta: {
+  bubbleMeta: {
     fontSize: 12,
-    opacity: 0.6,
-    marginTop: 4,
+    color: '#888',
+    marginTop: 2,
   },
-  correctionExplain: {
+  bubbleNote: {
     fontSize: 13,
     lineHeight: 19,
     color: '#444',
-    marginTop: 4,
+    marginTop: 2,
   },
-  chunkCard: {
-    backgroundColor: '#e3f2fd',
-    borderRadius: 12,
-    padding: 12,
-    gap: 4,
-  },
-  chunkPhrase: {
-    fontSize: 16,
+  bubbleChunk: {
+    fontSize: 15,
     fontWeight: '600',
-    color: '#0d47a1',
+    color: '#222',
   },
-  chunkNote: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#444',
-    marginBottom: 4,
-  },
-  chunkExample: {
+  bubbleExample: {
     fontSize: 13,
     color: '#222',
-    marginLeft: 4,
+    marginTop: 2,
   },
   analysisFooter: {
     marginTop: 12,
