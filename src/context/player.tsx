@@ -89,6 +89,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (player) player.setPlaybackRate(speed);
   }, [player, speed]);
 
+  // Status logger so we can see what the native player thinks is going on.
+  useEffect(() => {
+    console.log('[player] status', {
+      isLoaded: status.isLoaded,
+      playing: status.playing,
+      didJustFinish: status.didJustFinish,
+      duration: status.duration,
+    });
+  }, [status.isLoaded, status.playing, status.didJustFinish, status.duration]);
+
   // Auto-advance on finish (debounced via ref since didJustFinish stays true
   // across multiple status snapshots).
   const handledFinishRef = useRef(false);
@@ -116,19 +126,39 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const loadQueue = useCallback(
     (newQueue: Track[], startAt = 0) => {
-      if (newQueue.length === 0) return;
+      if (newQueue.length === 0) {
+        console.log('[player] loadQueue: queue empty, skipping');
+        return;
+      }
       const start = Math.max(0, Math.min(startAt, newQueue.length - 1));
       handledFinishRef.current = false;
       setQueue(newQueue);
       setCurrentIndex(start);
       setLoopSingle(false);
-      player.replace(newQueue[start].audioUri);
+      const uri = newQueue[start].audioUri;
+      console.log('[player] loadQueue', {
+        queueLen: newQueue.length,
+        startAt: start,
+        uri: uri.slice(0, 80),
+      });
+      try {
+        player.replace(uri);
+        console.log('[player] replace() ok');
+      } catch (e) {
+        console.log('[player] replace() threw', e);
+      }
       setTimeout(() => {
         try {
           player.seekTo(0).catch(() => {});
           player.play();
-        } catch {
-          /* swallow */
+          console.log('[player] play() called', {
+            isLoaded: player.isLoaded,
+            playing: player.playing,
+            duration: player.duration,
+            currentTime: player.currentTime,
+          });
+        } catch (e) {
+          console.log('[player] play() threw', e);
         }
       }, 80);
     },
@@ -136,10 +166,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const togglePlay = useCallback(() => {
+    console.log('[player] togglePlay', {
+      queueLen: queue.length,
+      isPlaying: status.playing,
+      isLoaded: status.isLoaded,
+    });
     if (queue.length === 0) return;
     if (status.playing) player.pause();
     else player.play();
-  }, [player, status.playing, queue.length]);
+  }, [player, status.playing, status.isLoaded, queue.length]);
 
   const jumpTo = useCallback(
     (index: number) => {
