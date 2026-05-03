@@ -2,22 +2,32 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
-import { listCardsDueBy } from '../../../src/db/cards';
+import { listCardsDueBy, updateCard } from '../../../src/db/cards';
+import { incrementCardsReviewed } from '../../../src/db/stats';
+import { scheduleCard, type CardRating } from '../../../src/srs/fsrs';
 import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Card as CardModel } from '../../../src/types';
 
 const RATINGS: {
   label: string;
+  rating: CardRating;
   bg: string;
   fg: string;
 }[] = [
-  { label: 'Again', bg: colors.rating.againBg, fg: colors.rating.againText },
-  { label: 'Hard', bg: colors.rating.hardBg, fg: colors.rating.hardText },
-  { label: 'Good', bg: colors.rating.goodBg, fg: colors.rating.goodText },
-  { label: 'Easy', bg: colors.rating.easyBg, fg: colors.rating.easyText },
+  { label: 'Again', rating: 1, bg: colors.rating.againBg, fg: colors.rating.againText },
+  { label: 'Hard', rating: 2, bg: colors.rating.hardBg, fg: colors.rating.hardText },
+  { label: 'Good', rating: 3, bg: colors.rating.goodBg, fg: colors.rating.goodText },
+  { label: 'Easy', rating: 4, bg: colors.rating.easyBg, fg: colors.rating.easyText },
 ];
 
 export default function CardsScreen() {
@@ -48,9 +58,25 @@ export default function CardsScreen() {
   const progress = totalToday === 0 ? 0 : reviewedToday / totalToday;
   const currentCard = dueCards[0];
 
-  const handleRate = () => {
+  const handleRate = async (rating: CardRating) => {
+    const card = currentCard;
+    if (!card) return;
+
+    // Advance UI immediately for snappiness; persist in background.
     setDueCards((prev) => prev.slice(1));
     setReviewedToday((n) => n + 1);
+
+    try {
+      const update = scheduleCard(card, rating);
+      await updateCard(card.id, update);
+      const today = new Date().toISOString().slice(0, 10);
+      await incrementCardsReviewed(today);
+    } catch (e) {
+      Alert.alert(
+        'Could not save review',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
   };
 
   if (loading) return <Screen />;
@@ -88,7 +114,7 @@ export default function CardsScreen() {
               {RATINGS.map((r) => (
                 <Pressable
                   key={r.label}
-                  onPress={handleRate}
+                  onPress={() => handleRate(r.rating)}
                   style={({ pressed }) => [
                     styles.ratingPill,
                     { backgroundColor: r.bg },
@@ -101,10 +127,6 @@ export default function CardsScreen() {
                 </Pressable>
               ))}
             </View>
-            <Text style={styles.ratingHint}>
-              FSRS scheduling lands in Step 13. Tapping any rating just
-              advances to the next card for now.
-            </Text>
           </>
         )}
       </ScrollView>
@@ -246,10 +268,5 @@ const styles = StyleSheet.create({
   ratingLabel: {
     fontSize: 14,
     fontWeight: '700',
-  },
-  ratingHint: {
-    ...text.caption,
-    color: colors.textTertiary,
-    textAlign: 'center',
   },
 });

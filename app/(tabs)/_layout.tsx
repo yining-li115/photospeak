@@ -49,12 +49,12 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="cards"
+        name="home"
         options={{
-          title: 'Cards',
+          title: 'Home',
           tabBarIcon: ({ color, focused, size }) => (
             <Ionicons
-              name={focused ? 'albums' : 'albums-outline'}
+              name={focused ? 'home' : 'home-outline'}
               color={color}
               size={size}
             />
@@ -62,12 +62,12 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="home"
+        name="cards"
         options={{
-          title: 'Home',
+          title: 'Cards',
           tabBarIcon: ({ color, focused, size }) => (
             <Ionicons
-              name={focused ? 'home' : 'home-outline'}
+              name={focused ? 'albums' : 'albums-outline'}
               color={color}
               size={size}
             />
