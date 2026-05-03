@@ -1,8 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { Tabs } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
-import { MiniPlayer } from '../../src/components/MiniPlayer';
+import { StyleSheet } from 'react-native';
 import { colors } from '../../src/theme';
 
 export default function TabsLayout() {
@@ -15,12 +13,6 @@ export default function TabsLayout() {
         tabBarStyle: styles.tabBar,
         tabBarLabelStyle: styles.tabLabel,
       }}
-      tabBar={(props) => (
-        <View>
-          <MiniPlayer />
-          <BottomTabBar {...props} />
-        </View>
-      )}
     >
       <Tabs.Screen
         name="sessions"

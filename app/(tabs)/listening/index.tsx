@@ -7,22 +7,15 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { Card } from '../../../src/components/Card';
-import { usePlayer } from '../../../src/context/player';
 import { listSessionsWithPodcast } from '../../../src/db/sessions';
-import {
-  tracksFromSession,
-  tracksFromSessions,
-} from '../../../src/services/queue';
 import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Session } from '../../../src/types';
 
 export default function ListeningScreen() {
   const router = useRouter();
-  const player = usePlayer();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -42,40 +35,9 @@ export default function ListeningScreen() {
     }, [])
   );
 
-  const playRow = (session: Session) => {
-    const queue = tracksFromSession(session);
-    if (queue.length === 0) return;
-    player.loadQueue(queue, 0);
-    router.push(`/listening/${session.id}`);
-  };
-
-  const playAll = () => {
-    const queue = tracksFromSessions(sessions);
-    if (queue.length === 0) return;
-    player.loadQueue(queue, 0);
-    router.push(`/listening/${sessions[0].id}`);
-  };
-
   return (
     <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: 'Listening',
-          headerRight: () =>
-            sessions.length > 1 ? (
-              <TouchableOpacity onPress={playAll} hitSlop={12}>
-                <View style={styles.playAllPill}>
-                  <Ionicons
-                    name="play"
-                    size={12}
-                    color={colors.textPrimary}
-                  />
-                  <Text style={styles.playAllLabel}>Play all</Text>
-                </View>
-              </TouchableOpacity>
-            ) : null,
-        }}
-      />
+      <Stack.Screen options={{ title: 'Listening' }} />
 
       {loading ? null : sessions.length === 0 ? (
         <EmptyState />
@@ -88,10 +50,7 @@ export default function ListeningScreen() {
           renderItem={({ item }) => (
             <PodcastRow
               session={item}
-              isCurrent={
-                player.current?.sessionId === item.id && player.isPlaying
-              }
-              onPress={() => playRow(item)}
+              onPress={() => router.push(`/listening/${item.id}`)}
             />
           )}
         />
@@ -102,11 +61,9 @@ export default function ListeningScreen() {
 
 function PodcastRow({
   session,
-  isCurrent,
   onPress,
 }: {
   session: Session;
-  isCurrent: boolean;
   onPress: () => void;
 }) {
   const date = new Date(session.created_at).toLocaleDateString();
@@ -125,15 +82,10 @@ function PodcastRow({
           <Text style={styles.rowTitle}>{date}</Text>
           <Text style={styles.rowMeta}>
             {sentenceCount} sentence{sentenceCount === 1 ? '' : 's'}
-            {isCurrent ? ' · now playing' : ''}
           </Text>
         </View>
         <View style={styles.playBadge}>
-          <Ionicons
-            name={isCurrent ? 'pause' : 'play'}
-            size={14}
-            color={colors.textPrimary}
-          />
+          <Ionicons name="play" size={14} color={colors.textPrimary} />
         </View>
       </Card>
     </Pressable>
@@ -163,20 +115,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   listContent: {
     padding: spacing.lg,
-  },
-  playAllPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: colors.accent,
-    borderRadius: 999,
-  },
-  playAllLabel: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontWeight: '700',
   },
   empty: {
     flex: 1,

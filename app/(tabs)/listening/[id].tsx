@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,12 +12,11 @@ import {
 } from 'react-native';
 import { Card } from '../../../src/components/Card';
 import { Pill } from '../../../src/components/Pill';
-import {
-  usePlayer,
-  type PlaybackSpeed,
-} from '../../../src/context/player';
 import { getSession } from '../../../src/db/sessions';
-import { tracksFromSession } from '../../../src/services/queue';
+import {
+  useSentencePlayer,
+  type PlaybackSpeed,
+} from '../../../src/hooks/useSentencePlayer';
 import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Session } from '../../../src/types';
 
@@ -64,51 +63,9 @@ export default function PlayerScreen() {
 }
 
 function PlayerView({ session }: { session: Session }) {
-  const player = usePlayer();
   const sentences = session.polished_sentences;
   const audioUris = session.sentence_audio_uris;
-
-  // Is this session the one currently in the global queue?
-  const sessionIsCurrent = player.current?.sessionId === session.id;
-
-  // Map current global track back to this session's local sentence index.
-  const activeLocalIndex = useMemo(() => {
-    if (!sessionIsCurrent || !player.current) return -1;
-    return player.current.sentenceIndex;
-  }, [sessionIsCurrent, player.current]);
-
-  const startThisSession = (sentenceIndex: number) => {
-    const tracks = tracksFromSession(session);
-    if (tracks.length === 0) return;
-    player.loadQueue(tracks, sentenceIndex);
-  };
-
-  const handlePlayPauseTap = () => {
-    if (sessionIsCurrent) {
-      player.togglePlay();
-    } else {
-      startThisSession(0);
-    }
-  };
-
-  const handleSentenceTap = (i: number) => {
-    if (sessionIsCurrent) {
-      const globalIdx = player.queue.findIndex(
-        (t) => t.sessionId === session.id && t.sentenceIndex === i
-      );
-      if (globalIdx >= 0) player.jumpTo(globalIdx);
-    } else {
-      startThisSession(i);
-    }
-  };
-
-  const handleNextTap = () => {
-    if (sessionIsCurrent) player.next();
-  };
-
-  const handlePrevTap = () => {
-    if (sessionIsCurrent) player.prev();
-  };
+  const player = useSentencePlayer(audioUris);
 
   return (
     <View style={styles.container}>
@@ -135,11 +92,11 @@ function PlayerView({ session }: { session: Session }) {
           <>
             <Card style={styles.sentenceCard} padding="md">
               {sentences.map((s, i) => {
-                const active = i === activeLocalIndex;
+                const active = i === player.currentIndex;
                 return (
                   <Pressable
                     key={i}
-                    onPress={() => handleSentenceTap(i)}
+                    onPress={() => player.playFrom(i)}
                     style={({ pressed }) => [
                       styles.sentenceRow,
                       pressed && { opacity: 0.7 },
@@ -178,31 +135,28 @@ function PlayerView({ session }: { session: Session }) {
             <View style={styles.controls}>
               <ControlButton
                 icon="play-skip-back"
-                onPress={handlePrevTap}
-                disabled={!sessionIsCurrent || player.currentIndex === 0}
+                onPress={player.prev}
+                disabled={player.currentIndex === 0}
               />
               <Pressable
-                onPress={handlePlayPauseTap}
+                onPress={player.togglePlay}
                 style={({ pressed }) => [
                   styles.playButton,
                   pressed && { opacity: 0.85 },
+                  !player.isLoaded && { opacity: 0.5 },
                 ]}
+                disabled={!player.isLoaded}
               >
                 <Ionicons
-                  name={
-                    sessionIsCurrent && player.isPlaying ? 'pause' : 'play'
-                  }
+                  name={player.isPlaying ? 'pause' : 'play'}
                   size={28}
                   color={colors.textPrimary}
                 />
               </Pressable>
               <ControlButton
                 icon="play-skip-forward"
-                onPress={handleNextTap}
-                disabled={
-                  !sessionIsCurrent ||
-                  player.currentIndex >= player.queue.length - 1
-                }
+                onPress={player.next}
+                disabled={player.currentIndex >= sentences.length - 1}
               />
             </View>
 
@@ -231,18 +185,10 @@ function PlayerView({ session }: { session: Session }) {
               </Text>
             </Pressable>
 
-            {!sessionIsCurrent && (
-              <Text style={styles.tapHint}>
-                Tap any sentence to start there.
-              </Text>
-            )}
-            {sessionIsCurrent && player.queue.length > sentences.length && (
-              <Text style={styles.tapHint}>
-                Playing all podcasts in sequence ({player.currentIndex + 1} of
-                {' '}
-                {player.queue.length})
-              </Text>
-            )}
+            <Text style={styles.tapHint}>
+              Tap any sentence to start there. Use the loop toggle above to
+              repeat the current sentence.
+            </Text>
           </>
         )}
       </ScrollView>
@@ -318,6 +264,27 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
+  modeToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.pillBg,
+  },
+  modeToggleActive: {
+    backgroundColor: colors.accentBgSoft,
+  },
+  modeToggleLabel: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  modeToggleLabelActive: {
+    color: colors.accentText,
+  },
   speedRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -344,27 +311,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: colors.pillBg,
-  },
-  modeToggleActive: {
-    backgroundColor: colors.accentBgSoft,
-  },
-  modeToggleLabel: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  modeToggleLabelActive: {
-    color: colors.accentText,
   },
   tapHint: {
     ...text.caption,
