@@ -47,6 +47,11 @@ export function useRecorder(): UseRecorder {
     });
     await recorder.prepareToRecordAsync();
     recorder.record();
+    // iOS audio engine has a ~150ms cold-start before it actually
+    // starts capturing samples. Hold here so the red button only
+    // appears once we're really recording, otherwise the user's
+    // first words get swallowed.
+    await new Promise((r) => setTimeout(r, 200));
     return true;
   }, [recorder]);
 
