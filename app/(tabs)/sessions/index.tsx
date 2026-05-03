@@ -2,44 +2,95 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import {
+  Swipeable,
+  RectButton,
+} from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card } from '../../../src/components/Card';
+import { usePlayer } from '../../../src/context/player';
+import { listCardsBySession } from '../../../src/db/cards';
 import { listSessions } from '../../../src/db/sessions';
+import { deleteSessionCascade } from '../../../src/services/delete';
 import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Session } from '../../../src/types';
 
 export default function SessionsScreen() {
   const router = useRouter();
+  const player = usePlayer();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(async () => {
+    const rows = await listSessions();
+    setSessions(rows);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        const rows = await listSessions();
-        if (!cancelled) {
-          setSessions(rows);
-          setLoading(false);
-        }
+        await reload();
+        if (!cancelled) setLoading(false);
       })();
       return () => {
         cancelled = true;
       };
-    }, [])
+    }, [reload])
   );
 
   const startNewSession = () => {
     const id = Crypto.randomUUID();
     router.push(`/sessions/${id}`);
+  };
+
+  const confirmDelete = async (session: Session) => {
+    const cardCount = (await listCardsBySession(session.id)).length;
+    const podcastNote =
+      session.polished_sentences.length > 0
+        ? `Its podcast in Listening`
+        : null;
+    const cardsNote =
+      cardCount > 0
+        ? `${cardCount} card${cardCount === 1 ? '' : 's'} in Cards`
+        : null;
+    const both = [podcastNote, cardsNote].filter(Boolean).join(' and ');
+    const message = both
+      ? `${both} will also be deleted. This can't be undone.`
+      : `This can't be undone.`;
+
+    Alert.alert('Delete this session?', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          // If the player is currently using this session, stop it
+          // before we yank the audio files out from under it.
+          if (player.current?.sessionId === session.id) {
+            player.stop();
+          }
+          try {
+            await deleteSessionCascade(session.id);
+            await reload();
+          } catch (e) {
+            Alert.alert(
+              'Delete failed',
+              e instanceof Error ? e.message : String(e)
+            );
+          }
+        },
+      },
+    ]);
   };
 
   return (
@@ -73,6 +124,7 @@ export default function SessionsScreen() {
             <SessionRow
               session={item}
               onPress={() => router.push(`/sessions/${item.id}`)}
+              onRequestDelete={() => confirmDelete(item)}
             />
           )}
         />
@@ -98,32 +150,60 @@ function EmptyState() {
 function SessionRow({
   session,
   onPress,
+  onRequestDelete,
 }: {
   session: Session;
   onPress: () => void;
+  onRequestDelete: () => void;
 }) {
+  const swipeRef = useRef<Swipeable>(null);
   const date = new Date(session.created_at).toLocaleDateString();
   const firstChunk = session.chunks[0]?.chunk ?? 'New session';
+
+  const renderRightActions = () => (
+    <RectButton
+      style={styles.deleteAction}
+      onPress={() => {
+        swipeRef.current?.close();
+        onRequestDelete();
+      }}
+    >
+      <Ionicons name="trash-outline" size={20} color="#fff" />
+      <Text style={styles.deleteActionLabel}>Delete</Text>
+    </RectButton>
+  );
+
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.85 }}>
-      <Card style={styles.row} padding="md">
-        <Image
-          source={{ uri: session.photo_thumbnail_uri }}
-          style={styles.thumb}
-        />
-        <View style={styles.rowText}>
-          <Text style={styles.rowDate}>{date}</Text>
-          <Text style={styles.rowChunk} numberOfLines={1}>
-            {firstChunk}
-          </Text>
-        </View>
-        <Ionicons
-          name="chevron-forward"
-          size={18}
-          color={colors.textTertiary}
-        />
-      </Card>
-    </Pressable>
+    <Swipeable
+      ref={swipeRef}
+      renderRightActions={renderRightActions}
+      overshootRight={false}
+      friction={2}
+      rightThreshold={40}
+    >
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => pressed && { opacity: 0.85 }}
+      >
+        <Card style={styles.row} padding="md">
+          <Image
+            source={{ uri: session.photo_thumbnail_uri }}
+            style={styles.thumb}
+          />
+          <View style={styles.rowText}>
+            <Text style={styles.rowDate}>{date}</Text>
+            <Text style={styles.rowChunk} numberOfLines={1}>
+              {firstChunk}
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={colors.textTertiary}
+          />
+        </Card>
+      </Pressable>
+    </Swipeable>
   );
 }
 
@@ -203,5 +283,19 @@ const styles = StyleSheet.create({
   rowChunk: {
     ...text.caption,
     marginTop: 2,
+  },
+  deleteAction: {
+    width: 88,
+    backgroundColor: colors.rating.againText,
+    borderRadius: radius.card,
+    marginLeft: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  deleteActionLabel: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

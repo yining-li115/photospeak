@@ -188,3 +188,12 @@ export async function deleteCard(id: string): Promise<void> {
   const db = await getDB();
   await db.runAsync('DELETE FROM cards WHERE id = ?', [id]);
 }
+
+export async function deleteCardsBySession(sessionId: string): Promise<number> {
+  const db = await getDB();
+  const result = await db.runAsync(
+    'DELETE FROM cards WHERE source_session_id = ?',
+    [sessionId]
+  );
+  return result.changes ?? 0;
+}
