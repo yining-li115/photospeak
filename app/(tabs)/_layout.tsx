@@ -54,7 +54,7 @@ export default function TabsLayout() {
           title: 'Home',
           tabBarIcon: ({ color, focused, size }) => (
             <Ionicons
-              name={focused ? 'home' : 'home-outline'}
+              name={focused ? 'calendar' : 'calendar-outline'}
               color={color}
               size={size}
             />
@@ -67,7 +67,7 @@ export default function TabsLayout() {
           title: 'Cards',
           tabBarIcon: ({ color, focused, size }) => (
             <Ionicons
-              name={focused ? 'albums' : 'albums-outline'}
+              name={focused ? 'wallet' : 'wallet-outline'}
               color={color}
               size={size}
             />

@@ -28,8 +28,8 @@ Return ONLY valid JSON with this exact structure:
       "chunk": "the exact phrase",
       "usage_note": "...(in Chinese)",
       "examples": [
-        { "text": "Example sentence 1.", "audio_uri": "" },
-        { "text": "Example sentence 2.", "audio_uri": "" }
+        { "text": "Example sentence 1." },
+        { "text": "Example sentence 2." }
       ]
     }
   ]

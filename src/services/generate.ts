@@ -5,11 +5,10 @@ import { createCard } from '../db/cards';
 import { createSession } from '../db/sessions';
 import { incrementSessionCount } from '../db/stats';
 import { saveAudioFromBase64 } from '../storage/audio';
-import type { Card, ChatMessage, Chunk, ChunkExample } from '../types';
+import type { Card, ChatMessage } from '../types';
 
 export type GenerateProgress =
   | { kind: 'sentence'; current: number; total: number }
-  | { kind: 'example'; current: number; total: number }
   | { kind: 'persisting' }
   | { kind: 'done' };
 
@@ -62,33 +61,10 @@ export async function generateSession(
     sentenceAudioUris.push(uri);
   }
 
-  const totalExamples = analysis.chunks.reduce(
-    (sum, c) => sum + c.examples.length,
-    0
-  );
-  let exampleProgress = 0;
-  const enrichedChunks: Chunk[] = [];
-  for (let ci = 0; ci < analysis.chunks.length; ci++) {
-    const chunk = analysis.chunks[ci];
-    const newExamples: ChunkExample[] = [];
-    for (let ei = 0; ei < chunk.examples.length; ei++) {
-      exampleProgress += 1;
-      onProgress?.({
-        kind: 'example',
-        current: exampleProgress,
-        total: totalExamples,
-      });
-      const ex = chunk.examples[ei];
-      const result = await synthesizeSpeech({ text: ex.text });
-      const uri = saveAudioFromBase64(
-        result.base64,
-        sessionId,
-        `chunk-${ci}-example-${ei}.${result.format}`
-      );
-      newExamples.push({ text: ex.text, audio_uri: uri });
-    }
-    enrichedChunks.push({ ...chunk, examples: newExamples });
-  }
+  // Cards UI no longer plays per-example audio, so we keep chunks as
+  // they came back from MiMo (text-only examples). Saves a bunch of
+  // TTS calls + wav file writes.
+  const enrichedChunks = analysis.chunks;
 
   onProgress?.({ kind: 'persisting' });
 

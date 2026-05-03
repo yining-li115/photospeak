@@ -805,8 +805,6 @@ function formatGenerateProgress(p: GenerateProgress | null): string {
   switch (p.kind) {
     case 'sentence':
       return `Synthesizing sentence ${p.current}/${p.total}…`;
-    case 'example':
-      return `Synthesizing example ${p.current}/${p.total}…`;
     case 'persisting':
       return 'Saving…';
     case 'done':
@@ -818,9 +816,7 @@ function progressPercent(p: GenerateProgress | null): number {
   if (!p) return 4;
   switch (p.kind) {
     case 'sentence':
-      return Math.min(60, 4 + (p.current / Math.max(p.total, 1)) * 56);
-    case 'example':
-      return Math.min(95, 60 + (p.current / Math.max(p.total, 1)) * 35);
+      return Math.min(95, 4 + (p.current / Math.max(p.total, 1)) * 91);
     case 'persisting':
       return 97;
     case 'done':

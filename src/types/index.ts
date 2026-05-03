@@ -31,7 +31,10 @@ export interface Chunk {
 
 export interface ChunkExample {
   text: string;
-  audio_uri: string;
+  /** Filled by Step 9 generate if we synthesize per-example audio.
+   *  Cards UI no longer plays these, so it's optional now and new
+   *  generates leave it empty. */
+  audio_uri?: string;
 }
 
 export interface Card {
