@@ -53,6 +53,9 @@ export function useRecorder(): UseRecorder {
   const stop = useCallback(async (): Promise<string | null> => {
     if (!recorder.isRecording) return null;
     await recorder.stop();
+    // iOS AVAudioRecorder needs a moment to flush the m4a footer to disk
+    // before the file is readable. Without this, base64() can return ''.
+    await new Promise((r) => setTimeout(r, 150));
     await setAudioModeAsync({ allowsRecording: false });
     return recorder.uri;
   }, [recorder]);

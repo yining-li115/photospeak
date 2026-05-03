@@ -262,7 +262,7 @@ export default function SessionDetailScreen() {
       {mode === 'new' && photo && (
         <View style={styles.previewContainer}>
           <Image
-            source={{ uri: photo.photo_uri }}
+            source={{ uri: `${photo.photo_uri}?v=${photo.version}` }}
             style={analysis ? styles.previewSmall : styles.preview}
             contentFit="cover"
           />

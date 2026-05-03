@@ -8,6 +8,12 @@ const THUMBNAIL_SIZE = 200;
 export interface SavedPhoto {
   photo_uri: string;
   photo_thumbnail_uri: string;
+  /**
+   * Cache-bust token for <Image source={{ uri: `${photo_uri}?v=${version}` }} />.
+   * The file path stays stable (`<sessionId>.jpg`) so re-picking a photo
+   * replaces the file on disk; this version makes expo-image notice the swap.
+   */
+  version: number;
 }
 
 function ensureSubdir(name: string): Directory {
@@ -24,8 +30,9 @@ export async function savePhoto(
 ): Promise<SavedPhoto> {
   const photosDir = ensureSubdir(PHOTOS_SUBDIR);
   const thumbsDir = ensureSubdir(THUMBS_SUBDIR);
+  const filename = `${sessionId}.jpg`;
 
-  const fullDest = new File(photosDir, `${sessionId}.jpg`);
+  const fullDest = new File(photosDir, filename);
   if (fullDest.exists) fullDest.delete();
   new File(sourceUri).copy(fullDest);
 
@@ -34,13 +41,14 @@ export async function savePhoto(
     [{ resize: { width: THUMBNAIL_SIZE, height: THUMBNAIL_SIZE } }],
     { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
   );
-  const thumbDest = new File(thumbsDir, `${sessionId}.jpg`);
+  const thumbDest = new File(thumbsDir, filename);
   if (thumbDest.exists) thumbDest.delete();
   new File(thumbResult.uri).move(thumbDest);
 
   return {
     photo_uri: fullDest.uri,
     photo_thumbnail_uri: thumbDest.uri,
+    version: Date.now(),
   };
 }
 

@@ -41,6 +41,9 @@ export async function transcribeAudioWithAliyun(
     parameters: {
       asr_options: {
         enable_itn: false,
+        // Don't pin a language — qwen3-asr is LLM-based and handles
+        // code-switching (e.g. user falling back to a Chinese word
+        // mid-English sentence). Only set it if the caller asked.
         ...(options.language ? { language: options.language } : {}),
       },
     },

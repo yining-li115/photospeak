@@ -11,11 +11,19 @@ function ensureDir(): Directory {
 }
 
 export function persistRecording(sourceUri: string, sessionId: string): string {
+  const src = new File(sourceUri);
+  const srcSize = src.exists ? src.info().size ?? 0 : 0;
+  if (srcSize === 0) {
+    throw new Error(
+      'Recording is empty (0 bytes). Try re-recording — speak a bit louder or longer.'
+    );
+  }
+
   const dir = ensureDir();
   const ext = extensionOf(sourceUri);
   const dest = new File(dir, `${sessionId}${ext}`);
   if (dest.exists) dest.delete();
-  new File(sourceUri).move(dest);
+  src.move(dest);
   return dest.uri;
 }
 
