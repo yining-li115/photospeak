@@ -1,23 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {
   analyzeSession,
+  followUpChat,
   MimoError,
   type AnalysisResult,
 } from '../../../src/api/mimo';
 import { transcribeAudio, WhisperError } from '../../../src/api/whisper';
 import { getSession } from '../../../src/db/sessions';
+import type { ChatMessage } from '../../../src/types';
 import { useRecorder } from '../../../src/hooks/useAudioRecorder';
 import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
 import {
@@ -48,6 +53,8 @@ export default function SessionDetailScreen() {
   const [transcribing, setTranscribing] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatPending, setChatPending] = useState(false);
 
   const recorder = useRecorder();
 
@@ -154,17 +161,56 @@ export default function SessionDetailScreen() {
     }
   };
 
+  const handleSendChat = async (question: string) => {
+    if (!photo || !transcript || !analysis) return;
+    const trimmed = question.trim();
+    if (!trimmed) return;
+
+    const userMsg: ChatMessage = {
+      role: 'user',
+      content: trimmed,
+      timestamp: new Date().toISOString(),
+    };
+    const historyForApi = chatMessages;
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatPending(true);
+
+    try {
+      const reply = await followUpChat({
+        photoUri: photo.photo_thumbnail_uri,
+        transcript,
+        analysis,
+        history: historyForApi,
+        question: trimmed,
+      });
+      const assistantMsg: ChatMessage = {
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toISOString(),
+      };
+      setChatMessages((prev) => [...prev, assistantMsg]);
+    } catch (e) {
+      const msg = e instanceof MimoError ? e.message : String(e);
+      Alert.alert('Reply failed', msg);
+      setChatMessages((prev) => prev.slice(0, -1));
+    } finally {
+      setChatPending(false);
+    }
+  };
+
   const handleRetakePhoto = () => {
     setPhoto(null);
     setRecording(null);
     setTranscript(null);
     setAnalysis(null);
+    setChatMessages([]);
   };
 
   const handleRetakeRecording = () => {
     setRecording(null);
     setTranscript(null);
     setAnalysis(null);
+    setChatMessages([]);
   };
 
   return (
@@ -237,6 +283,9 @@ export default function SessionDetailScreen() {
             <AnalysisStage
               transcript={transcript}
               analysis={analysis}
+              chatMessages={chatMessages}
+              chatPending={chatPending}
+              onSendChat={handleSendChat}
               onRetake={handleRetakeRecording}
             />
           ) : transcript ? (
@@ -253,15 +302,18 @@ export default function SessionDetailScreen() {
             />
           )}
 
-          {!recorder.isRecording && !transcribing && !analyzing && (
-            <Pressable
-              onPress={handleRetakePhoto}
-              style={styles.retakeButton}
-              disabled={savingRecording}
-            >
-              <Text style={styles.retakeText}>Choose a different photo</Text>
-            </Pressable>
-          )}
+          {!recorder.isRecording &&
+            !transcribing &&
+            !analyzing &&
+            !analysis && (
+              <Pressable
+                onPress={handleRetakePhoto}
+                style={styles.retakeButton}
+                disabled={savingRecording}
+              >
+                <Text style={styles.retakeText}>Choose a different photo</Text>
+              </Pressable>
+            )}
         </View>
       )}
     </View>
@@ -395,78 +447,154 @@ function AnalyzingStage() {
 function AnalysisStage({
   transcript,
   analysis,
+  chatMessages,
+  chatPending,
+  onSendChat,
   onRetake,
 }: {
   transcript: string;
   analysis: AnalysisResult;
+  chatMessages: ChatMessage[];
+  chatPending: boolean;
+  onSendChat: (text: string) => void;
   onRetake: () => void;
 }) {
+  const scrollRef = useRef<ScrollView>(null);
+  const [draft, setDraft] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(
+      () => scrollRef.current?.scrollToEnd({ animated: true }),
+      50
+    );
+    return () => clearTimeout(t);
+  }, [chatMessages.length, chatPending]);
+
+  const handleSubmit = () => {
+    const t = draft.trim();
+    if (!t || chatPending) return;
+    onSendChat(t);
+    setDraft('');
+  };
+
   return (
-    <ScrollView
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.analysisOuter}
-      contentContainerStyle={styles.analysisInner}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
-      <UserBubble>
-        <Text style={styles.userBubbleText}>{transcript}</Text>
-      </UserBubble>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.chatScroll}
+        contentContainerStyle={styles.analysisInner}
+        keyboardShouldPersistTaps="handled"
+      >
+        <UserBubble>
+          <Text style={styles.userBubbleText}>{transcript}</Text>
+        </UserBubble>
 
-      <AssistantBubble>
-        {analysis.corrected_sentences.length > 0 && (
-          <View style={styles.bubbleSection}>
-            <Text style={styles.bubbleSectionLabel}>Corrections</Text>
-            {analysis.corrected_sentences.map((c, i) => (
-              <View key={i} style={styles.bubbleSubBlock}>
-                <Text style={styles.bubbleStrike}>{c.original}</Text>
-                <Text style={styles.bubbleFixed}>→ {c.corrected}</Text>
-                <Text style={styles.bubbleMeta}>
-                  {c.error_type}
-                  {c.is_common_for_chinese_speakers ? ' · 常见错误' : ''}
-                </Text>
-                {c.explanation ? (
-                  <Text style={styles.bubbleNote}>{c.explanation}</Text>
-                ) : null}
-              </View>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.bubbleSection}>
-          <Text style={styles.bubbleSectionLabel}>Polished</Text>
-          <Text style={styles.bubbleText}>
-            {analysis.polished_sentences.join(' ')}
-          </Text>
-        </View>
-
-        {analysis.chunks.length > 0 && (
-          <View style={styles.bubbleSection}>
-            <Text style={styles.bubbleSectionLabel}>Chunks to remember</Text>
-            {analysis.chunks.map((chunk) => (
-              <View key={chunk.id} style={styles.bubbleSubBlock}>
-                <Text style={styles.bubbleChunk}>{chunk.chunk}</Text>
-                {chunk.usage_note ? (
-                  <Text style={styles.bubbleNote}>{chunk.usage_note}</Text>
-                ) : null}
-                {chunk.examples.map((ex, i) => (
-                  <Text key={i} style={styles.bubbleExample}>
-                    · {ex.text}
+        <AssistantBubble>
+          {analysis.corrected_sentences.length > 0 && (
+            <View style={styles.bubbleSection}>
+              <Text style={styles.bubbleSectionLabel}>Corrections</Text>
+              {analysis.corrected_sentences.map((c, i) => (
+                <View key={i} style={styles.bubbleSubBlock}>
+                  <Text style={styles.bubbleStrike}>{c.original}</Text>
+                  <Text style={styles.bubbleFixed}>→ {c.corrected}</Text>
+                  <Text style={styles.bubbleMeta}>
+                    {c.error_type}
+                    {c.is_common_for_chinese_speakers ? ' · 常见错误' : ''}
                   </Text>
-                ))}
-              </View>
-            ))}
-          </View>
-        )}
-      </AssistantBubble>
+                  {c.explanation ? (
+                    <Text style={styles.bubbleNote}>{c.explanation}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          )}
 
-      <View style={styles.analysisFooter}>
-        <View style={[styles.transcribeButton, styles.buttonDisabled]}>
-          <Ionicons name="sparkles-outline" size={18} color="#fff" />
-          <Text style={styles.buttonLabel}>Confirm & Generate (Step 9)</Text>
+          <View style={styles.bubbleSection}>
+            <Text style={styles.bubbleSectionLabel}>Polished</Text>
+            <Text style={styles.bubbleText}>
+              {analysis.polished_sentences.join(' ')}
+            </Text>
+          </View>
+
+          {analysis.chunks.length > 0 && (
+            <View style={styles.bubbleSection}>
+              <Text style={styles.bubbleSectionLabel}>Chunks to remember</Text>
+              {analysis.chunks.map((chunk) => (
+                <View key={chunk.id} style={styles.bubbleSubBlock}>
+                  <Text style={styles.bubbleChunk}>{chunk.chunk}</Text>
+                  {chunk.usage_note ? (
+                    <Text style={styles.bubbleNote}>{chunk.usage_note}</Text>
+                  ) : null}
+                  {chunk.examples.map((ex, i) => (
+                    <Text key={i} style={styles.bubbleExample}>
+                      · {ex.text}
+                    </Text>
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
+        </AssistantBubble>
+
+        {chatMessages.map((m, i) =>
+          m.role === 'user' ? (
+            <UserBubble key={i}>
+              <Text style={styles.userBubbleText}>{m.content}</Text>
+            </UserBubble>
+          ) : (
+            <AssistantBubble key={i}>
+              <Text style={styles.bubbleText}>{m.content}</Text>
+            </AssistantBubble>
+          )
+        )}
+
+        {chatPending && (
+          <AssistantBubble>
+            <ActivityIndicator />
+          </AssistantBubble>
+        )}
+
+        <View style={styles.analysisFooter}>
+          <View style={[styles.transcribeButton, styles.buttonDisabled]}>
+            <Ionicons name="sparkles-outline" size={18} color="#fff" />
+            <Text style={styles.buttonLabel}>Confirm & Generate (Step 9)</Text>
+          </View>
+          <Pressable onPress={onRetake} style={styles.retakeButton}>
+            <Text style={styles.retakeText}>Re-record</Text>
+          </Pressable>
         </View>
-        <Pressable onPress={onRetake} style={styles.retakeButton}>
-          <Text style={styles.retakeText}>Re-record</Text>
+      </ScrollView>
+
+      <View style={styles.composer}>
+        <TextInput
+          style={styles.composerInput}
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Ask a follow-up…"
+          placeholderTextColor="#999"
+          editable={!chatPending}
+          multiline
+          returnKeyType="send"
+          onSubmitEditing={handleSubmit}
+          blurOnSubmit
+        />
+        <Pressable
+          onPress={handleSubmit}
+          disabled={chatPending || draft.trim().length === 0}
+          style={({ pressed }) => [
+            styles.composerSend,
+            (chatPending || draft.trim().length === 0) && styles.buttonDisabled,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          <Ionicons name="arrow-up" size={20} color="#fff" />
         </Pressable>
       </View>
-    </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -765,5 +893,36 @@ const styles = StyleSheet.create({
     marginTop: 12,
     alignItems: 'center',
     gap: 4,
+  },
+  chatScroll: {
+    flex: 1,
+  },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 8 : 8,
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#ddd',
+  },
+  composerInput: {
+    flex: 1,
+    maxHeight: 120,
+    minHeight: 40,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#f1f3f5',
+    borderRadius: 20,
+    fontSize: 15,
+    color: '#222',
+  },
+  composerSend: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#0a84ff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
