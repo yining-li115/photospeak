@@ -66,6 +66,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const queueRef = useRef(queue);
   const indexRef = useRef(currentIndex);
   const loopRef = useRef(loopSingle);
+  // True once the queue has played all the way through. togglePlay uses
+  // this to restart from index 0 instead of trying to play() a player
+  // that's already parked at the end of the last sentence.
+  const finishedRef = useRef(false);
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
@@ -110,6 +114,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (next < queueRef.current.length) {
       setCurrentIndex(next);
       setAutoplayWanted(true);
+    } else {
+      // End of queue. Park the flag so togglePlay can restart cleanly.
+      finishedRef.current = true;
     }
   }, []);
 
@@ -120,6 +127,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const loadQueue = useCallback((newQueue: Track[], startAt = 0) => {
     if (newQueue.length === 0) return;
     const start = Math.max(0, Math.min(startAt, newQueue.length - 1));
+    finishedRef.current = false;
     setQueue(newQueue);
     setCurrentIndex(start);
     setLoopSingle(false);
@@ -127,6 +135,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlay = useCallback(() => {
+    if (queueRef.current.length === 0) return;
+
+    // Queue ended — restart from index 0 instead of trying to play() a
+    // player that's already parked at the last sentence's end.
+    if (finishedRef.current) {
+      finishedRef.current = false;
+      if (indexRef.current === 0) {
+        // Source URI is the same as the current player → no remount.
+        // Just seek+play in place.
+        const p = playerRef.current;
+        if (!p) {
+          setAutoplayWanted(true);
+          return;
+        }
+        try {
+          p.seekTo(0).catch(() => {});
+          p.play();
+        } catch {
+          /* swallow */
+        }
+      } else {
+        // Need to load index 0's source.
+        setCurrentIndex(0);
+        setAutoplayWanted(true);
+      }
+      return;
+    }
+
     const p = playerRef.current;
     if (!p) return;
     try {
@@ -137,35 +173,35 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const jumpTo = useCallback(
-    (index: number) => {
-      if (index < 0 || index >= queueRef.current.length) return;
-      if (index === indexRef.current) {
-        // Same source — restart in place; no engine remount needed.
-        const p = playerRef.current;
-        if (!p) return;
-        try {
-          p.seekTo(0).catch(() => {});
-          p.play();
-        } catch {
-          /* swallow */
-        }
-        return;
+  const jumpTo = useCallback((index: number) => {
+    if (index < 0 || index >= queueRef.current.length) return;
+    finishedRef.current = false;
+    if (index === indexRef.current) {
+      // Same source — restart in place; no engine remount needed.
+      const p = playerRef.current;
+      if (!p) return;
+      try {
+        p.seekTo(0).catch(() => {});
+        p.play();
+      } catch {
+        /* swallow */
       }
-      setCurrentIndex(index);
-      setAutoplayWanted(true);
-    },
-    []
-  );
+      return;
+    }
+    setCurrentIndex(index);
+    setAutoplayWanted(true);
+  }, []);
 
   const next = useCallback(() => {
     if (indexRef.current + 1 >= queueRef.current.length) return;
+    finishedRef.current = false;
     setCurrentIndex(indexRef.current + 1);
     setAutoplayWanted(true);
   }, []);
 
   const prev = useCallback(() => {
     if (indexRef.current - 1 < 0) return;
+    finishedRef.current = false;
     setCurrentIndex(indexRef.current - 1);
     setAutoplayWanted(true);
   }, []);
@@ -187,6 +223,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         /* swallow */
       }
     }
+    finishedRef.current = false;
     setQueue([]);
     setCurrentIndex(0);
     setLoopSingle(false);
