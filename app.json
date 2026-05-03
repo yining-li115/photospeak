@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.photospeak",
+      "bundleIdentifier": "com.yining.photospeak",
       "infoPlist": {
         "UIBackgroundModes": ["audio"]
       }
