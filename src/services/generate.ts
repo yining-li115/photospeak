@@ -5,11 +5,6 @@ import { createCard } from '../db/cards';
 import { createSession } from '../db/sessions';
 import { incrementSessionCount } from '../db/stats';
 import { saveAudioFromBase64 } from '../storage/audio';
-import {
-  getPodcastStyle,
-  getVoice,
-  PODCAST_STYLE_INSTRUCTION,
-} from '../storage/settings';
 import type { Card, ChatMessage } from '../types';
 
 export type GenerateProgress =
@@ -48,16 +43,6 @@ export async function generateSession(
     onProgress,
   } = input;
 
-  // Read user's voice + podcast-style preference once, apply to every
-  // sentence in this generate run so the podcast is consistent.
-  const [voice, podcastStyle] = await Promise.all([
-    getVoice(),
-    getPodcastStyle(),
-  ]);
-  const styleInstruction = podcastStyle
-    ? PODCAST_STYLE_INSTRUCTION
-    : undefined;
-
   const sentenceAudioUris: string[] = [];
   for (let i = 0; i < analysis.polished_sentences.length; i++) {
     onProgress?.({
@@ -67,8 +52,6 @@ export async function generateSession(
     });
     const result = await synthesizeSpeech({
       text: analysis.polished_sentences[i],
-      voice,
-      styleInstruction,
     });
     const uri = saveAudioFromBase64(
       result.base64,
