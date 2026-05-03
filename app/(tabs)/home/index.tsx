@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card } from '../../../src/components/Card';
+import { Pill } from '../../../src/components/Pill';
 import { Screen } from '../../../src/components/Screen';
 import { countMasteredCards, listCardsDueBy } from '../../../src/db/cards';
 import {
@@ -11,6 +12,14 @@ import {
   getStatsRange,
   getTotalListeningSeconds,
 } from '../../../src/db/stats';
+import {
+  getPodcastStyle,
+  getVoice,
+  setPodcastStyle as savePodcastStyle,
+  setVoice as saveVoice,
+  VOICES,
+  type VoiceId,
+} from '../../../src/storage/settings';
 import { colors, spacing, text } from '../../../src/theme';
 
 const HEATMAP_WEEKS = 16;
@@ -43,20 +52,41 @@ const ZERO_STATS: HomeStats = {
 
 export default function HomeScreen() {
   const [stats, setStats] = useState<HomeStats>(ZERO_STATS);
+  const [voice, setVoiceState] = useState<VoiceId>('Chloe');
+  const [podcastStyle, setPodcastStyleState] = useState(false);
   const greeting = currentGreeting();
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        const next = await loadHomeStats();
-        if (!cancelled) setStats(next);
+        const [next, v, ps] = await Promise.all([
+          loadHomeStats(),
+          getVoice(),
+          getPodcastStyle(),
+        ]);
+        if (!cancelled) {
+          setStats(next);
+          setVoiceState(v);
+          setPodcastStyleState(ps);
+        }
       })();
       return () => {
         cancelled = true;
       };
     }, [])
   );
+
+  const updateVoice = (v: VoiceId) => {
+    setVoiceState(v);
+    saveVoice(v).catch(() => {});
+  };
+
+  const togglePodcastStyle = () => {
+    const next = !podcastStyle;
+    setPodcastStyleState(next);
+    savePodcastStyle(next).catch(() => {});
+  };
 
   return (
     <Screen>
@@ -117,6 +147,50 @@ export default function HomeScreen() {
             value={String(stats.cardsDueToday)}
             hideDivider
           />
+        </Card>
+
+        <Card>
+          <Text style={styles.sectionLabel}>Podcast voice</Text>
+          <View style={styles.voicePills}>
+            {VOICES.map((v) => (
+              <Pill
+                key={v.id}
+                label={v.label}
+                active={voice === v.id}
+                onPress={() => updateVoice(v.id)}
+              />
+            ))}
+          </View>
+          <Text style={styles.voiceCaption}>
+            {VOICES.find((v) => v.id === voice)?.description ?? ''} ·{' '}
+            {VOICES.find((v) => v.id === voice)?.gender ?? ''}
+          </Text>
+
+          <Pressable onPress={togglePodcastStyle} style={styles.styleToggleRow}>
+            <View
+              style={[
+                styles.checkbox,
+                podcastStyle && styles.checkboxOn,
+              ]}
+            >
+              {podcastStyle && (
+                <Ionicons name="checkmark" size={14} color="#fff" />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.styleToggleLabel}>
+                Read like a podcast host
+              </Text>
+              <Text style={styles.styleToggleHint}>
+                Warmer, slower, more engaging tone
+              </Text>
+            </View>
+          </Pressable>
+
+          <Text style={styles.voiceFooter}>
+            Applies to your next Confirm & Generate. Existing podcasts keep
+            their original voice.
+          </Text>
         </Card>
 
         {stats.streak === 0 && (
@@ -411,5 +485,53 @@ const styles = StyleSheet.create({
   tipBody: {
     ...text.caption,
     lineHeight: 19,
+  },
+  voicePills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  voiceCaption: {
+    ...text.caption,
+    color: colors.textTertiary,
+    marginTop: spacing.sm,
+  },
+  styleToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.separator,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.textTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  styleToggleLabel: {
+    ...text.cardTitle,
+    fontSize: 14,
+  },
+  styleToggleHint: {
+    ...text.caption,
+    color: colors.textTertiary,
+    marginTop: 2,
+  },
+  voiceFooter: {
+    ...text.caption,
+    color: colors.textTertiary,
+    fontSize: 11,
+    marginTop: spacing.sm,
   },
 });
