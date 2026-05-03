@@ -29,7 +29,21 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
   const [loopSingle, setLoopSingle] = useState(false);
   const [speed, setSpeedState] = useState<PlaybackSpeed>(1);
 
-  // Configure session for playback (silent-mode + background hint).
+  // Always-fresh refs so the didJustFinish effect can avoid noisy deps.
+  const indexRef = useRef(currentIndex);
+  const loopRef = useRef(loopSingle);
+  const urisRef = useRef(uris);
+  useEffect(() => {
+    indexRef.current = currentIndex;
+  }, [currentIndex]);
+  useEffect(() => {
+    loopRef.current = loopSingle;
+  }, [loopSingle]);
+  useEffect(() => {
+    urisRef.current = uris;
+  }, [uris]);
+
+  // iOS: still play in silent mode.
   useEffect(() => {
     setAudioModeAsync({
       allowsRecording: false,
@@ -37,32 +51,39 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
     }).catch(() => {});
   }, []);
 
-  // Apply speed to current player whenever it (or speed) changes.
+  // Hand single-sentence looping to the native player so we don't have to
+  // race didJustFinish against playFrom.
+  useEffect(() => {
+    if (!player) return;
+    player.loop = loopSingle;
+  }, [player, loopSingle]);
+
+  // Keep playback rate in sync.
   useEffect(() => {
     if (player) player.setPlaybackRate(speed);
   }, [player, speed]);
 
-  // didJustFinish edge: advance to next or loop the same sentence.
-  const lastFinishedAt = useRef<number>(0);
+  // Auto-advance to the next sentence when the current one finishes.
+  // didJustFinish stays `true` for multiple status snapshots, so we use
+  // a ref to advance exactly once per finish event.
+  const handledFinishRef = useRef(false);
   useEffect(() => {
-    if (!status.didJustFinish) return;
-    // didJustFinish can fire repeatedly per render — debounce by render tick.
-    const stamp = Date.now();
-    if (stamp - lastFinishedAt.current < 100) return;
-    lastFinishedAt.current = stamp;
-
-    if (loopSingle) {
-      player.seekTo(0).then(() => player.play()).catch(() => {});
-      return;
+    if (status.didJustFinish && !handledFinishRef.current) {
+      handledFinishRef.current = true;
+      // If loopSingle is on, native loop already replays — don't advance.
+      if (loopRef.current) return;
+      const nextIdx = indexRef.current + 1;
+      const list = urisRef.current;
+      if (nextIdx < list.length) {
+        setCurrentIndex(nextIdx);
+        player.replace(list[nextIdx]);
+        player.play();
+      }
+    } else if (!status.didJustFinish) {
+      // Reset latch once we're playing again or fully stopped.
+      handledFinishRef.current = false;
     }
-    if (currentIndex + 1 < uris.length) {
-      const next = currentIndex + 1;
-      setCurrentIndex(next);
-      player.replace(uris[next]);
-      player.play();
-    }
-    // else: end of podcast — leave paused
-  }, [status.didJustFinish, loopSingle, currentIndex, uris, player]);
+  }, [status.didJustFinish, player]);
 
   const togglePlay = useCallback(() => {
     if (status.playing) player.pause();
@@ -72,6 +93,7 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
   const playFrom = useCallback(
     (index: number, opts?: { loop?: boolean }) => {
       if (index < 0 || index >= uris.length) return;
+      handledFinishRef.current = false;
       setLoopSingle(opts?.loop ?? false);
       setCurrentIndex(index);
       player.replace(uris[index]);
