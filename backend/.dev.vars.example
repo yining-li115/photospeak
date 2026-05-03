@@ -1,0 +1,6 @@
+# Copy to .dev.vars (gitignored) and fill in real values for local
+# `wrangler dev` runs. Production uses `wrangler secret put` instead.
+
+MIMO_API_KEY=
+DASHSCOPE_API_KEY=
+APP_SHARED_TOKEN=replace-with-a-long-random-string
