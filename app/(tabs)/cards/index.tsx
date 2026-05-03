@@ -1,8 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
-import { colors, radius, shadow, spacing, text } from '../../../src/theme';
+import { listCardsDueBy } from '../../../src/db/cards';
+import { colors, radius, spacing, text } from '../../../src/theme';
+import type { Card as CardModel } from '../../../src/types';
 
 const RATINGS: {
   label: string;
@@ -16,10 +21,39 @@ const RATINGS: {
 ];
 
 export default function CardsScreen() {
-  // Placeholder: real data + flip + FSRS land in Steps 13-14.
-  const dueCount = 0;
-  const totalToday = 0;
-  const progress = totalToday === 0 ? 0 : 1 - dueCount / totalToday;
+  const [dueCards, setDueCards] = useState<CardModel[]>([]);
+  const [reviewedToday, setReviewedToday] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        const now = new Date().toISOString();
+        const due = await listCardsDueBy(now);
+        if (!cancelled) {
+          setDueCards(due);
+          setReviewedToday(0);
+          setLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
+  const totalToday = dueCards.length + reviewedToday;
+  const remaining = dueCards.length;
+  const progress = totalToday === 0 ? 0 : reviewedToday / totalToday;
+  const currentCard = dueCards[0];
+
+  const handleRate = () => {
+    setDueCards((prev) => prev.slice(1));
+    setReviewedToday((n) => n + 1);
+  };
+
+  if (loading) return <Screen />;
 
   return (
     <Screen>
@@ -30,7 +64,9 @@ export default function CardsScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>Cards</Text>
           <Text style={styles.subtitle}>
-            {dueCount} of {totalToday} due today
+            {remaining === 0 && totalToday === 0
+              ? 'Nothing due today'
+              : `${remaining} of ${totalToday} due today`}
           </Text>
         </View>
 
@@ -43,16 +79,16 @@ export default function CardsScreen() {
           />
         </View>
 
-        {totalToday === 0 ? (
-          <EmptyState />
+        {!currentCard ? (
+          <EmptyState reviewedToday={reviewedToday} />
         ) : (
           <>
-            <FlashCardSample />
+            <Flashcard card={currentCard} />
             <View style={styles.ratingRow}>
               {RATINGS.map((r) => (
                 <Pressable
                   key={r.label}
-                  onPress={() => {}}
+                  onPress={handleRate}
                   style={({ pressed }) => [
                     styles.ratingPill,
                     { backgroundColor: r.bg },
@@ -65,6 +101,10 @@ export default function CardsScreen() {
                 </Pressable>
               ))}
             </View>
+            <Text style={styles.ratingHint}>
+              FSRS scheduling lands in Step 13. Tapping any rating just
+              advances to the next card for now.
+            </Text>
           </>
         )}
       </ScrollView>
@@ -72,32 +112,43 @@ export default function CardsScreen() {
   );
 }
 
-function EmptyState() {
+function EmptyState({ reviewedToday }: { reviewedToday: number }) {
   return (
     <View style={styles.empty}>
       <View style={styles.emptyIcon}>
         <Ionicons
-          name="albums-outline"
+          name={
+            reviewedToday > 0
+              ? 'checkmark-circle-outline'
+              : 'albums-outline'
+          }
           size={28}
           color={colors.textTertiary}
         />
       </View>
-      <Text style={styles.emptyTitle}>No cards due</Text>
+      <Text style={styles.emptyTitle}>
+        {reviewedToday > 0 ? 'All done for today' : 'No cards due'}
+      </Text>
       <Text style={styles.emptySubtitle}>
-        Confirm a session in Sessions to start building your spaced-
-        repetition deck.
+        {reviewedToday > 0
+          ? `Reviewed ${reviewedToday} card${reviewedToday === 1 ? '' : 's'}. Come back tomorrow.`
+          : 'Confirm a session in Sessions to start building your spaced-repetition deck.'}
       </Text>
     </View>
   );
 }
 
-function FlashCardSample() {
+function Flashcard({ card }: { card: CardModel }) {
+  const date = new Date(card.created_at).toLocaleDateString();
   return (
     <Card style={styles.flashcard}>
-      <Text style={styles.cardChunk}>captures a lively scene</Text>
+      <Text style={styles.cardChunk}>{card.chunk}</Text>
       <View style={styles.cardMetaRow}>
-        <View style={styles.cardThumb} />
-        <Text style={styles.cardMeta}>From session · today</Text>
+        <Image
+          source={{ uri: card.photo_thumbnail_uri }}
+          style={styles.cardThumb}
+        />
+        <Text style={styles.cardMeta}>From session · {date}</Text>
       </View>
     </Card>
   );
@@ -177,7 +228,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 8,
     backgroundColor: colors.pillBg,
-    ...shadow,
   },
   cardMeta: {
     ...text.caption,
@@ -196,5 +246,10 @@ const styles = StyleSheet.create({
   ratingLabel: {
     fontSize: 14,
     fontWeight: '700',
+  },
+  ratingHint: {
+    ...text.caption,
+    color: colors.textTertiary,
+    textAlign: 'center',
   },
 });
