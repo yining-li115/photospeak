@@ -105,6 +105,23 @@ export async function countCards(): Promise<number> {
   return row?.n ?? 0;
 }
 
+/**
+ * Count cards considered "mastered" by FSRS stability. 21 days is the
+ * common threshold for a card moving from learning into the mature
+ * pool; stability is roughly the interval (in days) at which the
+ * model expects ~90% recall.
+ */
+export async function countMasteredCards(
+  thresholdDays: number = 21
+): Promise<number> {
+  const db = await getDB();
+  const row = await db.getFirstAsync<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM cards WHERE stability >= ?',
+    [thresholdDays]
+  );
+  return row?.n ?? 0;
+}
+
 export async function updateCard(
   id: string,
   patch: Partial<Omit<Card, 'id'>>

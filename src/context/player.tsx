@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { addListeningSeconds } from '../db/stats';
 
 export type PlaybackSpeed = 0.75 | 1 | 1.25;
 
@@ -93,6 +94,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       playsInSilentMode: true,
     }).catch(() => {});
   }, []);
+
+  // Listening time: each time the player transitions into a 'playing'
+  // state, start a stopwatch; on the next change (pause / queue end /
+  // unmount) write the elapsed seconds to today's row in stats.
+  useEffect(() => {
+    if (!isPlaying) return;
+    const startedAt = Date.now();
+    return () => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      if (elapsed <= 0) return;
+      const today = new Date().toISOString().slice(0, 10);
+      addListeningSeconds(today, elapsed).catch(() => {});
+    };
+  }, [isPlaying]);
 
   // Stable callback identities — the AudioEngine effects depend on
   // these and we don't want to retrigger them on every Provider render.
