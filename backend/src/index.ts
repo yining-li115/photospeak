@@ -1,37 +1,51 @@
+import 'dotenv/config';
+import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-
-interface Env {
-  /** MiMo API key — used for image+text analysis and TTS. */
-  MIMO_API_KEY: string;
-  /** Aliyun DashScope key — used for qwen3-asr-flash STT. */
-  DASHSCOPE_API_KEY: string;
-  /** Shared secret the mobile app sends in Authorization. Generate
-   *  a long random string and put it in both .dev.vars and the
-   *  mobile app's .env (EXPO_PUBLIC_API_TOKEN). Until we add real
-   *  per-user auth this is just a "you-are-the-app" check. */
-  APP_SHARED_TOKEN: string;
-}
 
 const MIMO_BASE = 'https://api.xiaomimimo.com/v1';
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
 
-const app = new Hono<{ Bindings: Env }>();
+interface Env {
+  MIMO_API_KEY: string;
+  DASHSCOPE_API_KEY: string;
+  /** Shared secret the mobile app sends in Authorization. Generate
+   *  a long random string and put it in both .env and the mobile
+   *  app's .env (EXPO_PUBLIC_API_TOKEN). Until we add real per-user
+   *  auth this is just a "you-are-the-app" check. */
+  APP_SHARED_TOKEN: string;
+}
+
+function readEnv(): Env {
+  const e = process.env;
+  const required = ['MIMO_API_KEY', 'DASHSCOPE_API_KEY', 'APP_SHARED_TOKEN'];
+  for (const k of required) {
+    if (!e[k]) {
+      throw new Error(`Missing required env var: ${k}`);
+    }
+  }
+  return {
+    MIMO_API_KEY: e.MIMO_API_KEY!,
+    DASHSCOPE_API_KEY: e.DASHSCOPE_API_KEY!,
+    APP_SHARED_TOKEN: e.APP_SHARED_TOKEN!,
+  };
+}
+
+const env = readEnv();
+const app = new Hono();
 
 app.use('*', cors());
 
-// Public liveness check — no auth, useful for "is the worker up?".
+// Public liveness checks — no auth, useful for load balancer / monitor.
 app.get('/', (c) => c.text('PhotoSpeak API · ok'));
 app.get('/health', (c) =>
   c.json({ status: 'ok', deployedAt: new Date().toISOString() })
 );
 
-// Everything under /api needs the shared token. Mobile sends:
-//   Authorization: Bearer <APP_SHARED_TOKEN>
+// /api/* requires Bearer token equal to APP_SHARED_TOKEN.
 app.use('/api/*', async (c, next) => {
   const auth = c.req.header('authorization') ?? '';
-  const expected = `Bearer ${c.env.APP_SHARED_TOKEN}`;
-  if (!c.env.APP_SHARED_TOKEN || auth !== expected) {
+  if (auth !== `Bearer ${env.APP_SHARED_TOKEN}`) {
     return c.json({ error: 'unauthorized' }, 401);
   }
   await next();
@@ -39,10 +53,8 @@ app.use('/api/*', async (c, next) => {
 
 /**
  * STT — Aliyun DashScope qwen3-asr-flash.
- * Body forwarded as-is to:
- *   POST /services/aigc/multimodal-generation/generation
- * Mobile already builds the right body shape (model, input.messages
- * with audio data URI, asr_options); we just inject the key.
+ * Mobile app builds the body (model/input.messages with audio data
+ * URI/asr_options); we just inject the upstream key.
  */
 app.post('/api/transcribe', async (c) => {
   const body = await c.req.text();
@@ -52,7 +64,7 @@ app.post('/api/transcribe', async (c) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${c.env.DASHSCOPE_API_KEY}`,
+        Authorization: `Bearer ${env.DASHSCOPE_API_KEY}`,
       },
       body,
     }
@@ -71,7 +83,7 @@ app.post('/api/analyze', async (c) => {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'api-key': c.env.MIMO_API_KEY,
+      'api-key': env.MIMO_API_KEY,
     },
     body,
   });
@@ -81,7 +93,7 @@ app.post('/api/analyze', async (c) => {
 /**
  * TTS — same MiMo chat-completions endpoint with the TTS model
  * (mimo-v2.5-tts) and an `audio` field. Response carries base64
- * audio in choices[0].message.audio.data; we just relay JSON back.
+ * audio in choices[0].message.audio.data; we just relay JSON.
  */
 app.post('/api/tts', async (c) => {
   const body = await c.req.text();
@@ -89,15 +101,13 @@ app.post('/api/tts', async (c) => {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'api-key': c.env.MIMO_API_KEY,
+      'api-key': env.MIMO_API_KEY,
     },
     body,
   });
   return passthrough(upstream);
 });
 
-/** Forward upstream's status + body without buffering JSON parse —
- *  errors from MiMo / DashScope keep their original shape. */
 async function passthrough(res: Response): Promise<Response> {
   const text = await res.text();
   return new Response(text, {
@@ -109,4 +119,6 @@ async function passthrough(res: Response): Promise<Response> {
   });
 }
 
-export default app;
+const port = Number(process.env.PORT ?? 3000);
+serve({ fetch: app.fetch, port });
+console.log(`[photospeak-api] listening on :${port}`);

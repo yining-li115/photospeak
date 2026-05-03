@@ -2,19 +2,25 @@
   "name": "photospeak-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Cloudflare Worker that proxies PhotoSpeak's calls to MiMo / Aliyun DashScope so API keys never ship in the mobile app.",
+  "type": "module",
+  "description": "Node.js (Hono) proxy that fronts MiMo / Aliyun DashScope so API keys never ship inside the mobile binary.",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "dotenv": "^16.4.0",
     "hono": "^4.6.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241218.0",
-    "typescript": "^5.7.0",
-    "wrangler": "^3.95.0"
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
