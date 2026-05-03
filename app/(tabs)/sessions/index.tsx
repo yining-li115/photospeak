@@ -8,9 +8,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card } from '../../../src/components/Card';
 import { listSessions } from '../../../src/db/sessions';
 import { colors, radius, spacing, text } from '../../../src/theme';
@@ -43,23 +43,24 @@ export default function SessionsScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: 'Sessions',
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={startNewSession}
-              hitSlop={12}
-              accessibilityLabel="Start new session"
-            >
-              <View style={styles.addButton}>
-                <Ionicons name="add" size={22} color={colors.textPrimary} />
-              </View>
-            </TouchableOpacity>
-          ),
-        }}
-      />
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Sessions</Text>
+        <Pressable
+          onPress={startNewSession}
+          hitSlop={12}
+          accessibilityLabel="Start new session"
+          style={({ pressed }) => [
+            styles.addButton,
+            pressed && { opacity: 0.85 },
+          ]}
+        >
+          <Ionicons name="add" size={22} color={colors.textPrimary} />
+        </Pressable>
+      </View>
+
       {loading ? null : sessions.length === 0 ? (
         <EmptyState />
       ) : (
@@ -76,7 +77,7 @@ export default function SessionsScreen() {
           )}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -128,16 +129,28 @@ function SessionRow({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  headerTitle: {
+    ...text.screenTitle,
+  },
   addButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   listContent: {
     padding: spacing.lg,
+    paddingTop: 0,
   },
   empty: {
     flex: 1,

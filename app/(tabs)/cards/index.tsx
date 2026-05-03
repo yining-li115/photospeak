@@ -1,8 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import {
-  useAudioPlayer,
-  useAudioPlayerStatus,
-} from 'expo-audio';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -26,7 +22,7 @@ import { Screen } from '../../../src/components/Screen';
 import { listCardsDueBy, updateCard } from '../../../src/db/cards';
 import { incrementCardsReviewed } from '../../../src/db/stats';
 import { scheduleCard, type CardRating } from '../../../src/srs/fsrs';
-import { colors, radius, shadow, spacing, text } from '../../../src/theme';
+import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Card as CardModel } from '../../../src/types';
 
 const RATINGS: {
@@ -46,9 +42,6 @@ export default function CardsScreen() {
   const [reviewedToday, setReviewedToday] = useState(0);
   const [loading, setLoading] = useState(true);
   const [flipped, setFlipped] = useState(false);
-  const [playingExampleUri, setPlayingExampleUri] = useState<string | null>(
-    null
-  );
 
   useFocusEffect(
     useCallback(() => {
@@ -60,7 +53,6 @@ export default function CardsScreen() {
           setDueCards(due);
           setReviewedToday(0);
           setFlipped(false);
-          setPlayingExampleUri(null);
           setLoading(false);
         }
       })();
@@ -82,7 +74,6 @@ export default function CardsScreen() {
     setDueCards((prev) => prev.slice(1));
     setReviewedToday((n) => n + 1);
     setFlipped(false);
-    setPlayingExampleUri(null);
 
     try {
       const update = scheduleCard(card, rating);
@@ -132,8 +123,6 @@ export default function CardsScreen() {
               card={currentCard}
               flipped={flipped}
               onFlip={() => setFlipped((f) => !f)}
-              playingUri={playingExampleUri}
-              onPlayExample={(uri) => setPlayingExampleUri(uri)}
             />
             {flipped ? (
               <View style={styles.ratingRow}>
@@ -159,14 +148,6 @@ export default function CardsScreen() {
           </>
         )}
       </ScrollView>
-
-      {playingExampleUri && (
-        <ExamplePlayerEngine
-          key={playingExampleUri}
-          uri={playingExampleUri}
-          onFinished={() => setPlayingExampleUri(null)}
-        />
-      )}
     </Screen>
   );
 }
@@ -201,17 +182,9 @@ interface FlashcardProps {
   card: CardModel;
   flipped: boolean;
   onFlip: () => void;
-  playingUri: string | null;
-  onPlayExample: (uri: string) => void;
 }
 
-function Flashcard({
-  card,
-  flipped,
-  onFlip,
-  playingUri,
-  onPlayExample,
-}: FlashcardProps) {
+function Flashcard({ card, flipped, onFlip }: FlashcardProps) {
   const rotation = useSharedValue(0);
 
   useEffect(() => {
@@ -250,12 +223,7 @@ function Flashcard({
         <CardFront card={card} />
       </Animated.View>
       <Animated.View style={[styles.flipFace, styles.flipBackPos, backStyle]}>
-        <CardBack
-          card={card}
-          playingUri={playingUri}
-          onPlayExample={onPlayExample}
-          interactive={flipped}
-        />
+        <CardBack card={card} />
       </Animated.View>
     </Pressable>
   );
@@ -277,17 +245,7 @@ function CardFront({ card }: { card: CardModel }) {
   );
 }
 
-function CardBack({
-  card,
-  playingUri,
-  onPlayExample,
-  interactive,
-}: {
-  card: CardModel;
-  playingUri: string | null;
-  onPlayExample: (uri: string) => void;
-  interactive: boolean;
-}) {
+function CardBack({ card }: { card: CardModel }) {
   return (
     <Card style={styles.flashcardBack}>
       <View style={styles.backHeader}>
@@ -304,64 +262,15 @@ function CardBack({
       {card.examples.length > 0 && (
         <View style={styles.backSection}>
           <Text style={styles.backSectionLabel}>Examples</Text>
-          {card.examples.map((ex, i) => {
-            const isThisPlaying =
-              !!ex.audio_uri && playingUri === ex.audio_uri;
-            return (
-              <View key={i} style={styles.exampleRow}>
-                <Text style={styles.exampleText}>{ex.text}</Text>
-                {ex.audio_uri ? (
-                  <Pressable
-                    onPress={() => {
-                      if (interactive) onPlayExample(ex.audio_uri);
-                    }}
-                    hitSlop={8}
-                    style={({ pressed }) => [
-                      styles.examplePlayBtn,
-                      pressed && interactive && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Ionicons
-                      name={isThisPlaying ? 'volume-high' : 'play'}
-                      size={14}
-                      color={colors.textPrimary}
-                    />
-                  </Pressable>
-                ) : null}
-              </View>
-            );
-          })}
+          {card.examples.map((ex, i) => (
+            <View key={i} style={styles.exampleRow}>
+              <Text style={styles.exampleText}>{ex.text}</Text>
+            </View>
+          ))}
         </View>
       )}
     </Card>
   );
-}
-
-function ExamplePlayerEngine({
-  uri,
-  onFinished,
-}: {
-  uri: string;
-  onFinished: () => void;
-}) {
-  const player = useAudioPlayer(uri);
-  const status = useAudioPlayerStatus(player);
-
-  useEffect(() => {
-    if (status.isLoaded) {
-      try {
-        player.play();
-      } catch {
-        /* swallow */
-      }
-    }
-  }, [status.isLoaded, player]);
-
-  useEffect(() => {
-    if (status.didJustFinish) onFinished();
-  }, [status.didJustFinish, onFinished]);
-
-  return null;
 }
 
 const styles = StyleSheet.create({
@@ -490,15 +399,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: colors.textPrimary,
-  },
-  examplePlayBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.accentBgSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadow,
   },
   flipHint: {
     ...text.caption,

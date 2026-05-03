@@ -4,7 +4,7 @@ import type { ChatMessage, Chunk, CorrectedSentence } from '../types';
 const ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions';
 const MODEL = 'mimo-v2.5';
 
-const SYSTEM_PROMPT = `You are an English language coach. The user is a native Chinese speaker learning English. Analyze their spoken English description of a photo.
+const SYSTEM_PROMPT = `You are an English language coach. The user is a native Chinese speaker learning English. Analyze their spoken English description of a photo. Your job is to help user improve.
 
 Return ONLY valid JSON with this exact structure:
 {

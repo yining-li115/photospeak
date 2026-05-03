@@ -7,9 +7,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card } from '../../../src/components/Card';
 import { usePlayer } from '../../../src/context/player';
 import { listSessionsWithPodcast } from '../../../src/db/sessions';
@@ -57,21 +57,26 @@ export default function ListeningScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: 'Listening',
-          headerRight: () =>
-            sessions.length > 1 ? (
-              <TouchableOpacity onPress={playAll} hitSlop={12}>
-                <View style={styles.playAllPill}>
-                  <Ionicons name="play" size={12} color={colors.textPrimary} />
-                  <Text style={styles.playAllLabel}>Play all</Text>
-                </View>
-              </TouchableOpacity>
-            ) : null,
-        }}
-      />
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Listening</Text>
+        {sessions.length > 1 && (
+          <Pressable
+            onPress={playAll}
+            hitSlop={12}
+            accessibilityLabel="Play all podcasts"
+            style={({ pressed }) => [
+              styles.playAllPill,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Ionicons name="play" size={12} color={colors.textPrimary} />
+            <Text style={styles.playAllLabel}>Play all</Text>
+          </Pressable>
+        )}
+      </View>
 
       {loading ? null : sessions.length === 0 ? (
         <EmptyState />
@@ -92,7 +97,7 @@ export default function ListeningScreen() {
           )}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -157,15 +162,27 @@ function EmptyState() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  headerTitle: {
+    ...text.screenTitle,
+  },
   listContent: {
     padding: spacing.lg,
+    paddingTop: 0,
   },
   playAllPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     backgroundColor: colors.accent,
     borderRadius: 999,
   },
