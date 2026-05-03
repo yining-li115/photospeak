@@ -46,31 +46,34 @@ interface PlayerContextValue {
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
-  const player = useAudioPlayer();
-  const status = useAudioPlayerStatus(player);
-
   const [queue, setQueue] = useState<Track[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loopSingle, setLoopSingle] = useState(false);
   const [speed, setSpeedState] = useState<PlaybackSpeed>(1);
+  const [shouldAutoPlay, setShouldAutoPlay] = useState(false);
 
+  // The player is recreated every time the source URI changes. This avoids
+  // the "useAudioPlayer(null) + later replace()" path which leaves the
+  // native player in an isLoaded=false / duration=NaN state on iOS.
+  const currentUri = queue[currentIndex]?.audioUri ?? null;
+  const player = useAudioPlayer(currentUri);
+  const status = useAudioPlayerStatus(player);
+
+  const queueRef = useRef(queue);
   const indexRef = useRef(currentIndex);
   const loopRef = useRef(loopSingle);
-  const queueRef = useRef(queue);
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
   useEffect(() => {
     indexRef.current = currentIndex;
   }, [currentIndex]);
   useEffect(() => {
     loopRef.current = loopSingle;
   }, [loopSingle]);
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
 
-  // Configure audio session. Split into two calls because
-  // shouldPlayInBackground requires native UIBackgroundModes config and
-  // can fail on dev builds that haven't been rebuilt — we don't want
-  // that failure to take down the basic playback config.
+  // Audio session: silent-mode play; background play in a separate call so
+  // its native-config dependency can fail without taking down the basics.
   useEffect(() => {
     setAudioModeAsync({
       allowsRecording: false,
@@ -79,130 +82,107 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setAudioModeAsync({ shouldPlayInBackground: true }).catch(() => {});
   }, []);
 
-  // Native loop reflects mode.
+  // Apply current playback rate + loop flag to whichever player instance
+  // is alive right now (these props don't survive recreation).
   useEffect(() => {
-    if (player) player.loop = loopSingle;
-  }, [player, loopSingle]);
-
-  // Keep playback rate in sync.
-  useEffect(() => {
-    if (player) player.setPlaybackRate(speed);
+    if (!player) return;
+    try {
+      player.setPlaybackRate(speed);
+    } catch {
+      /* swallow */
+    }
   }, [player, speed]);
 
-  // Status logger so we can see what the native player thinks is going on.
   useEffect(() => {
-    console.log('[player] status', {
-      isLoaded: status.isLoaded,
-      playing: status.playing,
-      didJustFinish: status.didJustFinish,
-      duration: status.duration,
-    });
-  }, [status.isLoaded, status.playing, status.didJustFinish, status.duration]);
+    if (!player) return;
+    try {
+      player.loop = loopSingle;
+    } catch {
+      /* swallow */
+    }
+  }, [player, loopSingle]);
 
-  // Auto-advance on finish (debounced via ref since didJustFinish stays true
-  // across multiple status snapshots).
+  // When a freshly-created player finishes loading, kick off playback if
+  // we asked for it (loadQueue / next / prev / jumpTo set this flag).
+  useEffect(() => {
+    if (!shouldAutoPlay) return;
+    if (!status.isLoaded) return;
+    setShouldAutoPlay(false);
+    try {
+      player.play();
+    } catch {
+      /* swallow */
+    }
+  }, [shouldAutoPlay, status.isLoaded, player]);
+
+  // Auto-advance on finish (debounced via ref since didJustFinish stays
+  // true across multiple status snapshots).
   const handledFinishRef = useRef(false);
   useEffect(() => {
     if (status.didJustFinish && !handledFinishRef.current) {
       handledFinishRef.current = true;
-      if (loopRef.current) return;
+      if (loopRef.current) return; // single-loop is handled by player.loop
       const nextIdx = indexRef.current + 1;
-      const list = queueRef.current;
-      if (nextIdx < list.length) {
+      if (nextIdx < queueRef.current.length) {
         setCurrentIndex(nextIdx);
-        player.replace(list[nextIdx].audioUri);
-        setTimeout(() => {
-          try {
-            player.play();
-          } catch {
-            /* player torn down */
-          }
-        }, 80);
+        setShouldAutoPlay(true);
       }
     } else if (!status.didJustFinish) {
       handledFinishRef.current = false;
     }
-  }, [status.didJustFinish, player]);
+  }, [status.didJustFinish]);
 
-  const loadQueue = useCallback(
-    (newQueue: Track[], startAt = 0) => {
-      if (newQueue.length === 0) {
-        console.log('[player] loadQueue: queue empty, skipping');
-        return;
-      }
-      const start = Math.max(0, Math.min(startAt, newQueue.length - 1));
-      handledFinishRef.current = false;
-      setQueue(newQueue);
-      setCurrentIndex(start);
-      setLoopSingle(false);
-      const uri = newQueue[start].audioUri;
-      console.log('[player] loadQueue', {
-        queueLen: newQueue.length,
-        startAt: start,
-        uri: uri.slice(0, 80),
-      });
-      try {
-        player.replace(uri);
-        console.log('[player] replace() ok');
-      } catch (e) {
-        console.log('[player] replace() threw', e);
-      }
-      setTimeout(() => {
-        try {
-          player.seekTo(0).catch(() => {});
-          player.play();
-          console.log('[player] play() called', {
-            isLoaded: player.isLoaded,
-            playing: player.playing,
-            duration: player.duration,
-            currentTime: player.currentTime,
-          });
-        } catch (e) {
-          console.log('[player] play() threw', e);
-        }
-      }, 80);
-    },
-    [player]
-  );
+  const loadQueue = useCallback((newQueue: Track[], startAt = 0) => {
+    if (newQueue.length === 0) return;
+    const start = Math.max(0, Math.min(startAt, newQueue.length - 1));
+    handledFinishRef.current = false;
+    setQueue(newQueue);
+    setCurrentIndex(start);
+    setLoopSingle(false);
+    setShouldAutoPlay(true);
+  }, []);
 
   const togglePlay = useCallback(() => {
-    console.log('[player] togglePlay', {
-      queueLen: queue.length,
-      isPlaying: status.playing,
-      isLoaded: status.isLoaded,
-    });
     if (queue.length === 0) return;
-    if (status.playing) player.pause();
-    else player.play();
-  }, [player, status.playing, status.isLoaded, queue.length]);
+    try {
+      if (status.playing) player.pause();
+      else player.play();
+    } catch {
+      /* swallow */
+    }
+  }, [player, status.playing, queue.length]);
 
   const jumpTo = useCallback(
     (index: number) => {
       if (index < 0 || index >= queue.length) return;
       handledFinishRef.current = false;
-      setCurrentIndex(index);
-      player.replace(queue[index].audioUri);
-      setTimeout(() => {
+      if (index === currentIndex) {
+        // Same track — just restart it.
         try {
           player.seekTo(0).catch(() => {});
           player.play();
         } catch {
           /* swallow */
         }
-      }, 80);
+        return;
+      }
+      setCurrentIndex(index);
+      setShouldAutoPlay(true);
     },
-    [player, queue]
+    [queue.length, currentIndex, player]
   );
 
   const next = useCallback(() => {
     if (currentIndex + 1 >= queue.length) return;
-    jumpTo(currentIndex + 1);
-  }, [currentIndex, queue.length, jumpTo]);
+    setCurrentIndex(currentIndex + 1);
+    setShouldAutoPlay(true);
+  }, [currentIndex, queue.length]);
 
   const prev = useCallback(() => {
     if (currentIndex - 1 < 0) return;
-    jumpTo(currentIndex - 1);
-  }, [currentIndex, jumpTo]);
+    setCurrentIndex(currentIndex - 1);
+    setShouldAutoPlay(true);
+  }, [currentIndex]);
 
   const toggleLoopMode = useCallback(() => {
     setLoopSingle((v) => !v);
@@ -221,6 +201,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setQueue([]);
     setCurrentIndex(0);
     setLoopSingle(false);
+    setShouldAutoPlay(false);
   }, [player]);
 
   const current = queue[currentIndex] ?? null;
