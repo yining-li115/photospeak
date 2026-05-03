@@ -68,6 +68,8 @@ export async function transcribeAudioWithAliyun(
 
   const json = (await response.json()) as DashScopeAsrResponse;
   const text = extractTranscript(json);
+  // null = unparseable response (real bug); '' = model produced no text
+  // (usually an empty/too-short recording — let the UI handle it).
   if (text === null) {
     throw new AliyunAsrError(
       `DashScope response missing transcript text. Got: ${JSON.stringify(json).slice(0, 500)}`
@@ -103,6 +105,9 @@ function extractTranscript(json: DashScopeAsrResponse): string | null {
         return part.text;
       }
     }
+    // Empty array is a valid "I heard nothing" response — return ''
+    // so the UI can show a friendly retry prompt.
+    return '';
   }
   if (typeof json.output?.text === 'string') return json.output.text;
   return null;

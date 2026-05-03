@@ -130,8 +130,8 @@ export default function SessionDetailScreen() {
       const text = await transcribeAudio(recording.uri);
       if (text.length === 0) {
         Alert.alert(
-          'Empty transcript',
-          'Whisper returned no text. Try recording again with clearer audio.'
+          '没听清',
+          '录音里没识别到内容。试着按住按钮多录几秒、说大声一点，或者凑近麦克风。'
         );
         return;
       }
