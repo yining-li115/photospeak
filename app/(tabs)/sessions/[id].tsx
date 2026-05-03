@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,6 +21,10 @@ import {
 } from '../../../src/api/mimo';
 import { transcribeAudio } from '../../../src/api/stt';
 import { Card } from '../../../src/components/Card';
+import {
+  generateSession,
+  type GenerateProgress,
+} from '../../../src/services/generate';
 import { Pill } from '../../../src/components/Pill';
 import { PrimaryButton } from '../../../src/components/PrimaryButton';
 import { getSession } from '../../../src/db/sessions';
@@ -44,6 +48,7 @@ interface SavedRecording {
 }
 
 export default function SessionDetailScreen() {
+  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [mode, setMode] = useState<Mode>('loading');
   const [existingSession, setExistingSession] = useState<Session | null>(null);
@@ -57,6 +62,9 @@ export default function SessionDetailScreen() {
   const [analyzing, setAnalyzing] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatPending, setChatPending] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generateProgress, setGenerateProgress] =
+    useState<GenerateProgress | null>(null);
 
   const recorder = useRecorder();
 
@@ -194,6 +202,44 @@ export default function SessionDetailScreen() {
     }
   };
 
+  const handleConfirmGenerate = async () => {
+    if (!photo || !recording || !transcript || !analysis) return;
+    setGenerating(true);
+    setGenerateProgress(null);
+    try {
+      const result = await generateSession({
+        sessionId: id,
+        photoUri: photo.photo_uri,
+        photoThumbnailUri: photo.photo_thumbnail_uri,
+        recordingUri: recording.uri,
+        transcript,
+        analysis,
+        chatHistory: chatMessages,
+        onProgress: setGenerateProgress,
+      });
+      Alert.alert(
+        'Done',
+        `Added to Listening · ${result.cardCount} card${
+          result.cardCount === 1 ? '' : 's'
+        } created`,
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/listening'),
+          },
+        ]
+      );
+    } catch (e) {
+      Alert.alert(
+        'Generation failed',
+        e instanceof Error ? e.message : String(e)
+      );
+    } finally {
+      setGenerating(false);
+      setGenerateProgress(null);
+    }
+  };
+
   const handleRetakeRecording = () => {
     setRecording(null);
     setTranscript(null);
@@ -230,7 +276,10 @@ export default function SessionDetailScreen() {
           chatMessages={chatMessages}
           chatPending={chatPending}
           analyzing={false}
+          generating={generating}
+          generateProgress={generateProgress}
           onSendChat={handleSendChat}
+          onConfirm={handleConfirmGenerate}
           onRetake={handleRetakeRecording}
         />
       ) : mode === 'new' && analyzing && transcript && photo ? (
@@ -241,7 +290,10 @@ export default function SessionDetailScreen() {
           chatMessages={[]}
           chatPending={false}
           analyzing={true}
+          generating={false}
+          generateProgress={null}
           onSendChat={() => {}}
+          onConfirm={() => {}}
           onRetake={handleRetakeRecording}
         />
       ) : mode === 'new' ? (
@@ -478,7 +530,10 @@ function AnalysisChatView({
   chatMessages,
   chatPending,
   analyzing,
+  generating,
+  generateProgress,
   onSendChat,
+  onConfirm,
   onRetake,
 }: {
   photo: SavedPhoto;
@@ -487,7 +542,10 @@ function AnalysisChatView({
   chatMessages: ChatMessage[];
   chatPending: boolean;
   analyzing: boolean;
+  generating: boolean;
+  generateProgress: GenerateProgress | null;
   onSendChat: (text: string) => void;
+  onConfirm: () => void;
   onRetake: () => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
@@ -556,15 +614,32 @@ function AnalysisChatView({
         {analysis && (
           <View style={styles.analysisFooter}>
             <PrimaryButton
-              label="Confirm & Generate"
-              icon="sparkles-outline"
+              label={
+                generating
+                  ? formatGenerateProgress(generateProgress)
+                  : 'Confirm & Generate'
+              }
+              icon={generating ? undefined : 'sparkles-outline'}
               fullWidth
-              disabled
+              disabled={generating}
+              onPress={onConfirm}
               variant="amber"
             />
-            <Pressable onPress={onRetake} style={styles.linkButton}>
-              <Text style={styles.linkText}>Re-record</Text>
-            </Pressable>
+            {generating && (
+              <View style={styles.progressBarTrack}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    { width: `${progressPercent(generateProgress)}%` },
+                  ]}
+                />
+              </View>
+            )}
+            {!generating && (
+              <Pressable onPress={onRetake} style={styles.linkButton}>
+                <Text style={styles.linkText}>Re-record</Text>
+              </Pressable>
+            )}
           </View>
         )}
       </ScrollView>
@@ -692,6 +767,34 @@ function showPickerError(error: PickerError): void {
   if (error.kind === 'no_photos') {
     Alert.alert('No photos found', 'Your library appears to be empty.');
     return;
+  }
+}
+
+function formatGenerateProgress(p: GenerateProgress | null): string {
+  if (!p) return 'Starting…';
+  switch (p.kind) {
+    case 'sentence':
+      return `Synthesizing sentence ${p.current}/${p.total}…`;
+    case 'example':
+      return `Synthesizing example ${p.current}/${p.total}…`;
+    case 'persisting':
+      return 'Saving…';
+    case 'done':
+      return 'Done';
+  }
+}
+
+function progressPercent(p: GenerateProgress | null): number {
+  if (!p) return 4;
+  switch (p.kind) {
+    case 'sentence':
+      return Math.min(60, 4 + (p.current / Math.max(p.total, 1)) * 56);
+    case 'example':
+      return Math.min(95, 60 + (p.current / Math.max(p.total, 1)) * 35);
+    case 'persisting':
+      return 97;
+    case 'done':
+      return 100;
   }
 }
 
@@ -923,6 +1026,18 @@ const styles = StyleSheet.create({
   analysisFooter: {
     marginTop: spacing.lg,
     gap: spacing.sm,
+  },
+  progressBarTrack: {
+    height: 4,
+    backgroundColor: colors.pillBg,
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    borderRadius: 2,
   },
   composer: {
     flexDirection: 'row',
