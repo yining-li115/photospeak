@@ -15,13 +15,7 @@ import { colors, spacing, text } from '../../../src/theme';
 
 const HEATMAP_WEEKS = 16;
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
-const HEATMAP_DAY_LABELS = ['', 'T', '', 'T', '', 'S', ''];
-const HEAT_CELL = 14;
 const HEAT_GAP = 3;
-const HEAT_LABEL_W = 10;
-const HEAT_LABEL_GAP = 6;
-const HEAT_GRID_W = HEATMAP_WEEKS * HEAT_CELL + (HEATMAP_WEEKS - 1) * HEAT_GAP;
-const HEAT_ROW_W = HEAT_LABEL_W + HEAT_LABEL_GAP + HEAT_GRID_W;
 
 interface HeatmapCell {
   date: string;
@@ -218,30 +212,21 @@ function Heatmap({ cells }: { cells: HeatmapCell[] }) {
   }
 
   return (
-    <View style={styles.heatmapRow}>
-      <View style={styles.heatmapDayLabels}>
-        {HEATMAP_DAY_LABELS.map((label, i) => (
-          <Text key={i} style={styles.heatmapDayLabel}>
-            {label}
-          </Text>
-        ))}
-      </View>
-      <View style={styles.heatmapGrid}>
-        {weeks.map((week, wi) => (
-          <View key={wi} style={styles.heatmapWeek}>
-            {week.map((day) => (
-              <View
-                key={day.date}
-                style={[
-                  styles.heatCell,
-                  { backgroundColor: levelColor(day.count) },
-                  day.isFuture && styles.heatCellFuture,
-                ]}
-              />
-            ))}
-          </View>
-        ))}
-      </View>
+    <View style={styles.heatmapGrid}>
+      {weeks.map((week, wi) => (
+        <View key={wi} style={styles.heatmapWeek}>
+          {week.map((day) => (
+            <View
+              key={day.date}
+              style={[
+                styles.heatCell,
+                { backgroundColor: levelColor(day.count) },
+                day.isFuture && styles.heatCellFuture,
+              ]}
+            />
+          ))}
+        </View>
+      ))}
     </View>
   );
 }
@@ -344,35 +329,20 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '500',
   },
-  heatmapRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: HEAT_LABEL_GAP,
-    marginTop: spacing.sm,
-    width: HEAT_ROW_W,
-  },
-  heatmapDayLabels: {
-    justifyContent: 'space-between',
-    height: 7 * HEAT_CELL + 6 * HEAT_GAP,
-  },
-  heatmapDayLabel: {
-    fontSize: 9,
-    color: colors.textTertiary,
-    lineHeight: HEAT_CELL,
-    width: HEAT_LABEL_W,
-    textAlign: 'right',
-  },
   heatmapGrid: {
     flexDirection: 'row',
     gap: HEAT_GAP,
+    marginTop: spacing.sm,
+    alignSelf: 'stretch',
   },
   heatmapWeek: {
     flexDirection: 'column',
     gap: HEAT_GAP,
+    flex: 1,
   },
   heatCell: {
-    width: HEAT_CELL,
-    height: HEAT_CELL,
+    width: '100%',
+    aspectRatio: 1,
     borderRadius: 3,
     backgroundColor: colors.pillBg,
   },
@@ -383,8 +353,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.sm,
-    width: HEAT_ROW_W,
+    marginTop: spacing.md,
   },
   heatmapHint: {
     fontSize: 11,
