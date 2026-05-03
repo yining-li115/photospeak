@@ -77,7 +77,15 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
       if (nextIdx < list.length) {
         setCurrentIndex(nextIdx);
         player.replace(list[nextIdx]);
-        player.play();
+        // expo-audio loads the new source on the next tick — calling
+        // play() immediately races the load and silently drops the start.
+        setTimeout(() => {
+          try {
+            player.play();
+          } catch {
+            /* player may be torn down during navigation */
+          }
+        }, 80);
       }
     } else if (!status.didJustFinish) {
       // Reset latch once we're playing again or fully stopped.
@@ -97,8 +105,15 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
       setLoopSingle(opts?.loop ?? false);
       setCurrentIndex(index);
       player.replace(uris[index]);
-      player.seekTo(0).catch(() => {});
-      player.play();
+      // Same race as the auto-advance path — let the native source attach.
+      setTimeout(() => {
+        try {
+          player.seekTo(0).catch(() => {});
+          player.play();
+        } catch {
+          /* swallow */
+        }
+      }, 80);
     },
     [player, uris]
   );
