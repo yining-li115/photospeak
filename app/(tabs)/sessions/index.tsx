@@ -11,7 +11,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Card } from '../../../src/components/Card';
 import { listSessions } from '../../../src/db/sessions';
+import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Session } from '../../../src/types';
 
 export default function SessionsScreen() {
@@ -51,22 +53,21 @@ export default function SessionsScreen() {
               hitSlop={12}
               accessibilityLabel="Start new session"
             >
-              <Ionicons name="add" size={28} color="#0a84ff" />
+              <View style={styles.addButton}>
+                <Ionicons name="add" size={22} color={colors.textPrimary} />
+              </View>
             </TouchableOpacity>
           ),
         }}
       />
       {loading ? null : sessions.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>No sessions yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Tap + to describe your first photo
-          </Text>
-        </View>
+        <EmptyState />
       ) : (
         <FlatList
           data={sessions}
           keyExtractor={(s) => s.id}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           renderItem={({ item }) => (
             <SessionRow
               session={item}
@@ -79,6 +80,20 @@ export default function SessionsScreen() {
   );
 }
 
+function EmptyState() {
+  return (
+    <View style={styles.empty}>
+      <View style={styles.emptyIcon}>
+        <Ionicons name="camera-outline" size={28} color={colors.textTertiary} />
+      </View>
+      <Text style={styles.emptyTitle}>No sessions yet</Text>
+      <Text style={styles.emptySubtitle}>
+        Tap the + above to describe your first photo.
+      </Text>
+    </View>
+  );
+}
+
 function SessionRow({
   session,
   onPress,
@@ -87,61 +102,86 @@ function SessionRow({
   onPress: () => void;
 }) {
   const date = new Date(session.created_at).toLocaleDateString();
-  const firstChunk = session.chunks[0]?.chunk ?? '—';
+  const firstChunk = session.chunks[0]?.chunk ?? 'New session';
   return (
-    <Pressable onPress={onPress} style={styles.row}>
-      <Image source={{ uri: session.photo_thumbnail_uri }} style={styles.thumb} />
-      <View style={styles.rowText}>
-        <Text style={styles.rowDate}>{date}</Text>
-        <Text style={styles.rowChunk} numberOfLines={1}>
-          {firstChunk}
-        </Text>
-      </View>
+    <Pressable onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.85 }}>
+      <Card style={styles.row} padding="md">
+        <Image
+          source={{ uri: session.photo_thumbnail_uri }}
+          style={styles.thumb}
+        />
+        <View style={styles.rowText}>
+          <Text style={styles.rowDate}>{date}</Text>
+          <Text style={styles.rowChunk} numberOfLines={1}>
+            {firstChunk}
+          </Text>
+        </View>
+        <Ionicons
+          name="chevron-forward"
+          size={18}
+          color={colors.textTertiary}
+        />
+      </Card>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.bg },
+  addButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  listContent: {
+    padding: spacing.lg,
+  },
   empty: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: spacing.xl,
+  },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.pillBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 6,
+    ...text.cardTitle,
+    fontSize: 17,
+    marginBottom: 4,
   },
   emptySubtitle: {
-    fontSize: 14,
-    opacity: 0.6,
+    ...text.caption,
+    textAlign: 'center',
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#ddd',
+    gap: spacing.md,
   },
   thumb: {
     width: 56,
     height: 56,
-    borderRadius: 8,
-    backgroundColor: '#eee',
+    borderRadius: radius.thumb,
+    backgroundColor: colors.pillBg,
   },
   rowText: {
     flex: 1,
-    marginLeft: 12,
   },
   rowDate: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...text.cardTitle,
   },
   rowChunk: {
-    fontSize: 13,
-    opacity: 0.7,
+    ...text.caption,
     marginTop: 2,
   },
 });

@@ -17,12 +17,13 @@ import {
 import {
   analyzeSession,
   followUpChat,
-  MimoError,
   type AnalysisResult,
 } from '../../../src/api/mimo';
 import { transcribeAudio } from '../../../src/api/stt';
+import { Card } from '../../../src/components/Card';
+import { Pill } from '../../../src/components/Pill';
+import { PrimaryButton } from '../../../src/components/PrimaryButton';
 import { getSession } from '../../../src/db/sessions';
-import type { ChatMessage } from '../../../src/types';
 import { useRecorder } from '../../../src/hooks/useAudioRecorder';
 import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
 import {
@@ -32,7 +33,8 @@ import {
   type PickerResult,
 } from '../../../src/storage/picker';
 import { persistRecording } from '../../../src/storage/recordings';
-import type { Session } from '../../../src/types';
+import { colors, radius, shadow, spacing, text } from '../../../src/theme';
+import type { ChatMessage, Session } from '../../../src/types';
 
 type Mode = 'loading' | 'new' | 'existing';
 
@@ -82,14 +84,16 @@ export default function SessionDetailScreen() {
         source === 'random'
           ? await pickRandomFromLibrary()
           : await pickFromLibrary();
-
       if (!result.ok) {
         showPickerError(result.error);
         return;
       }
-
       const saved = await savePhoto(result.uri, id);
       setPhoto(saved);
+      setRecording(null);
+      setTranscript(null);
+      setAnalysis(null);
+      setChatMessages([]);
     } catch (e) {
       Alert.alert('Could not load photo', String(e));
     } finally {
@@ -97,29 +101,28 @@ export default function SessionDetailScreen() {
     }
   };
 
-  const handleRecordStart = async () => {
-    const ok = await recorder.start();
-    if (!ok) {
-      Alert.alert(
-        'Microphone access needed',
-        'Grant microphone access in Settings to continue.'
-      );
-    }
-  };
-
-  const handleRecordStop = async () => {
-    if (!recorder.isRecording) return;
-    const durationMs = recorder.durationMs;
-    setSavingRecording(true);
-    try {
-      const tmpUri = await recorder.stop();
-      if (!tmpUri) return;
-      const persistedUri = persistRecording(tmpUri, id);
-      setRecording({ uri: persistedUri, durationMs });
-    } catch (e) {
-      Alert.alert('Could not save recording', String(e));
-    } finally {
-      setSavingRecording(false);
+  const handleToggleRecord = async () => {
+    if (recorder.isRecording) {
+      const ms = recorder.durationMs;
+      setSavingRecording(true);
+      try {
+        const tmpUri = await recorder.stop();
+        if (!tmpUri) return;
+        const persistedUri = persistRecording(tmpUri, id);
+        setRecording({ uri: persistedUri, durationMs: ms });
+      } catch (e) {
+        Alert.alert('Could not save recording', String(e));
+      } finally {
+        setSavingRecording(false);
+      }
+    } else {
+      const ok = await recorder.start();
+      if (!ok) {
+        Alert.alert(
+          'Microphone access needed',
+          'Grant microphone access in Settings to continue.'
+        );
+      }
     }
   };
 
@@ -127,18 +130,17 @@ export default function SessionDetailScreen() {
     if (!recording) return;
     setTranscribing(true);
     try {
-      const text = await transcribeAudio(recording.uri);
-      if (text.length === 0) {
+      const t = await transcribeAudio(recording.uri);
+      if (t.length === 0) {
         Alert.alert(
           '没听清',
-          '录音里没识别到内容。试着按住按钮多录几秒、说大声一点，或者凑近麦克风。'
+          '录音里没识别到内容。试着多录几秒、说大声一点，或者凑近麦克风。'
         );
         return;
       }
-      setTranscript(text);
+      setTranscript(t);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert('Transcription failed', msg);
+      Alert.alert('Transcription failed', e instanceof Error ? e.message : String(e));
     } finally {
       setTranscribing(false);
     }
@@ -154,8 +156,7 @@ export default function SessionDetailScreen() {
       });
       setAnalysis(result);
     } catch (e) {
-      const msg = e instanceof MimoError ? e.message : String(e);
-      Alert.alert('Analysis failed', msg);
+      Alert.alert('Analysis failed', e instanceof Error ? e.message : String(e));
     } finally {
       setAnalyzing(false);
     }
@@ -165,7 +166,6 @@ export default function SessionDetailScreen() {
     if (!photo || !transcript || !analysis) return;
     const trimmed = question.trim();
     if (!trimmed) return;
-
     const userMsg: ChatMessage = {
       role: 'user',
       content: trimmed,
@@ -174,7 +174,6 @@ export default function SessionDetailScreen() {
     const historyForApi = chatMessages;
     setChatMessages((prev) => [...prev, userMsg]);
     setChatPending(true);
-
     try {
       const reply = await followUpChat({
         photoUri: photo.photo_thumbnail_uri,
@@ -183,27 +182,16 @@ export default function SessionDetailScreen() {
         history: historyForApi,
         question: trimmed,
       });
-      const assistantMsg: ChatMessage = {
-        role: 'assistant',
-        content: reply,
-        timestamp: new Date().toISOString(),
-      };
-      setChatMessages((prev) => [...prev, assistantMsg]);
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: reply, timestamp: new Date().toISOString() },
+      ]);
     } catch (e) {
-      const msg = e instanceof MimoError ? e.message : String(e);
-      Alert.alert('Reply failed', msg);
+      Alert.alert('Reply failed', e instanceof Error ? e.message : String(e));
       setChatMessages((prev) => prev.slice(0, -1));
     } finally {
       setChatPending(false);
     }
-  };
-
-  const handleRetakePhoto = () => {
-    setPhoto(null);
-    setRecording(null);
-    setTranscript(null);
-    setAnalysis(null);
-    setChatMessages([]);
   };
 
   const handleRetakeRecording = () => {
@@ -221,7 +209,7 @@ export default function SessionDetailScreen() {
 
       {mode === 'loading' && (
         <View style={styles.center}>
-          <ActivityIndicator />
+          <ActivityIndicator color={colors.textTertiary} />
         </View>
       )}
 
@@ -229,136 +217,190 @@ export default function SessionDetailScreen() {
         <View style={styles.center}>
           <Text style={styles.placeholderTitle}>Session detail</Text>
           <Text style={styles.placeholderSubtitle}>
-            Chat view coming in Step 7
+            Chat replay — coming soon
           </Text>
         </View>
       )}
 
-      {mode === 'new' && !photo && (
-        <View style={styles.center}>
-          <Ionicons name="image-outline" size={64} color="#888" />
-          <Text style={styles.title}>Pick a photo to describe</Text>
-          <Text style={styles.subtitle}>
-            We&apos;ll then ask you to record ~1 minute of English
-          </Text>
-          <View style={styles.buttonRow}>
-            <PickerButton
-              label="Random"
-              icon="shuffle"
-              disabled={picking}
-              onPress={() => handlePick('random')}
-            />
-            <PickerButton
-              label="Choose"
-              icon="images-outline"
-              disabled={picking}
-              onPress={() => handlePick('choose')}
-            />
-          </View>
-          {picking && <ActivityIndicator style={styles.spinner} />}
-        </View>
-      )}
+      {mode === 'new' && analysis && transcript && photo ? (
+        <AnalysisChatView
+          photo={photo}
+          transcript={transcript}
+          analysis={analysis}
+          chatMessages={chatMessages}
+          chatPending={chatPending}
+          analyzing={false}
+          onSendChat={handleSendChat}
+          onRetake={handleRetakeRecording}
+        />
+      ) : mode === 'new' && analyzing && transcript && photo ? (
+        <AnalysisChatView
+          photo={photo}
+          transcript={transcript}
+          analysis={null}
+          chatMessages={[]}
+          chatPending={false}
+          analyzing={true}
+          onSendChat={() => {}}
+          onRetake={handleRetakeRecording}
+        />
+      ) : mode === 'new' ? (
+        <PreAnalysisView
+          photo={photo}
+          picking={picking}
+          recording={recording}
+          recorderActive={recorder.isRecording}
+          recorderDurationMs={recorder.durationMs}
+          savingRecording={savingRecording}
+          transcribing={transcribing}
+          transcript={transcript}
+          onPick={handlePick}
+          onToggleRecord={handleToggleRecord}
+          onTranscribe={handleTranscribe}
+          onAnalyze={handleAnalyze}
+          onRetakeRecording={handleRetakeRecording}
+        />
+      ) : null}
+    </View>
+  );
+}
 
-      {mode === 'new' && photo && (
-        <View style={styles.previewContainer}>
-          <Image
-            source={{ uri: `${photo.photo_uri}?v=${photo.version}` }}
-            style={analysis ? styles.previewSmall : styles.preview}
-            contentFit="cover"
-          />
+function PreAnalysisView({
+  photo,
+  picking,
+  recording,
+  recorderActive,
+  recorderDurationMs,
+  savingRecording,
+  transcribing,
+  transcript,
+  onPick,
+  onToggleRecord,
+  onTranscribe,
+  onAnalyze,
+  onRetakeRecording,
+}: {
+  photo: SavedPhoto | null;
+  picking: boolean;
+  recording: SavedRecording | null;
+  recorderActive: boolean;
+  recorderDurationMs: number;
+  savingRecording: boolean;
+  transcribing: boolean;
+  transcript: string | null;
+  onPick: (source: 'random' | 'choose') => void;
+  onToggleRecord: () => void;
+  onTranscribe: () => void;
+  onAnalyze: () => void;
+  onRetakeRecording: () => void;
+}) {
+  return (
+    <View style={styles.preContainer}>
+      <PhotoArea photo={photo} />
 
-          {!recording ? (
-            <RecordingStage
-              isRecording={recorder.isRecording}
-              durationMs={recorder.durationMs}
-              busy={savingRecording}
-              onPressIn={handleRecordStart}
-              onPressOut={handleRecordStop}
-            />
-          ) : transcribing ? (
-            <TranscribingStage />
-          ) : analyzing ? (
-            <AnalyzingStage />
-          ) : analysis && transcript ? (
-            <AnalysisStage
-              transcript={transcript}
-              analysis={analysis}
-              chatMessages={chatMessages}
-              chatPending={chatPending}
-              onSendChat={handleSendChat}
-              onRetake={handleRetakeRecording}
-            />
-          ) : transcript ? (
+      <View style={styles.pickerRow}>
+        <Pill
+          label="Random"
+          onPress={() => onPick('random')}
+          variant="filter"
+          active={false}
+        />
+        <Pill
+          label="Choose"
+          onPress={() => onPick('choose')}
+          variant="filter"
+          active={false}
+        />
+      </View>
+
+      {photo && (
+        <View style={styles.actionArea}>
+          {transcript ? (
             <TranscriptStage
               transcript={transcript}
-              onAnalyze={handleAnalyze}
-              onRetake={handleRetakeRecording}
+              onAnalyze={onAnalyze}
+              onRetake={onRetakeRecording}
             />
-          ) : (
+          ) : transcribing ? (
+            <BusyStage label="Transcribing…" />
+          ) : recording ? (
             <RecordingDoneStage
               durationMs={recording.durationMs}
-              onTranscribe={handleTranscribe}
-              onRetake={handleRetakeRecording}
+              onTranscribe={onTranscribe}
+              onRetake={onRetakeRecording}
+            />
+          ) : (
+            <RecordStage
+              recording={recorderActive}
+              durationMs={recorderDurationMs}
+              busy={savingRecording || picking}
+              onToggle={onToggleRecord}
             />
           )}
-
-          {!recorder.isRecording &&
-            !transcribing &&
-            !analyzing &&
-            !analysis && (
-              <Pressable
-                onPress={handleRetakePhoto}
-                style={styles.retakeButton}
-                disabled={savingRecording}
-              >
-                <Text style={styles.retakeText}>Choose a different photo</Text>
-              </Pressable>
-            )}
         </View>
       )}
     </View>
   );
 }
 
-function RecordingStage({
-  isRecording,
+function PhotoArea({ photo }: { photo: SavedPhoto | null }) {
+  if (!photo) {
+    return (
+      <View style={styles.photoPlaceholder}>
+        <Ionicons name="image-outline" size={36} color={colors.textTertiary} />
+        <Text style={styles.photoHint}>Pick a photo to describe</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri: `${photo.photo_uri}?v=${photo.version}` }}
+      style={styles.photo}
+      contentFit="cover"
+    />
+  );
+}
+
+function RecordStage({
+  recording,
   durationMs,
   busy,
-  onPressIn,
-  onPressOut,
+  onToggle,
 }: {
-  isRecording: boolean;
+  recording: boolean;
   durationMs: number;
   busy: boolean;
-  onPressIn: () => void;
-  onPressOut: () => void;
+  onToggle: () => void;
 }) {
   return (
-    <View style={styles.recordContainer}>
-      <Text style={styles.timer}>{formatDuration(durationMs)}</Text>
-      <Pressable
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
-        disabled={busy}
-        style={({ pressed }) => [
-          styles.recordButton,
-          (isRecording || pressed) && styles.recordButtonActive,
-          busy && styles.buttonDisabled,
-        ]}
-      >
-        <Ionicons
-          name={isRecording ? 'stop' : 'mic'}
-          size={36}
-          color="#fff"
-        />
-      </Pressable>
+    <View style={styles.recordCenter}>
+      <Text style={styles.timer}>
+        {recording ? formatDuration(durationMs) : '00:00'}
+      </Text>
       <Text style={styles.recordHint}>
         {busy
           ? 'Saving…'
-          : isRecording
-            ? 'Release to stop'
-            : 'Press and hold to record'}
+          : recording
+            ? 'Tap again to stop'
+            : 'Tap to start recording'}
       </Text>
+      <Pressable
+        onPress={onToggle}
+        disabled={busy}
+        style={({ pressed }) => [
+          styles.recordButton,
+          recording && styles.recordButtonRecording,
+          pressed && !busy && { opacity: 0.85 },
+          busy && { opacity: 0.5 },
+        ]}
+        hitSlop={8}
+      >
+        <Ionicons
+          name={recording ? 'stop' : 'mic'}
+          size={32}
+          color={recording ? '#fff' : colors.textPrimary}
+        />
+      </Pressable>
     </View>
   );
 }
@@ -373,32 +415,19 @@ function RecordingDoneStage({
   onRetake: () => void;
 }) {
   return (
-    <View style={styles.recordContainer}>
+    <View style={styles.actionStack}>
       <Text style={styles.recordedLabel}>
         Recorded {formatDuration(durationMs)}
       </Text>
-      <Pressable
+      <PrimaryButton
+        label="Transcribe"
+        icon="sparkles-outline"
         onPress={onTranscribe}
-        style={({ pressed }) => [
-          styles.transcribeButton,
-          pressed && styles.buttonPressed,
-        ]}
-      >
-        <Ionicons name="sparkles-outline" size={18} color="#fff" />
-        <Text style={styles.buttonLabel}>Transcribe</Text>
+        fullWidth
+      />
+      <Pressable onPress={onRetake} style={styles.linkButton}>
+        <Text style={styles.linkText}>Re-record</Text>
       </Pressable>
-      <Pressable onPress={onRetake} style={styles.retakeButton}>
-        <Text style={styles.retakeText}>Re-record</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function TranscribingStage() {
-  return (
-    <View style={styles.recordContainer}>
-      <ActivityIndicator />
-      <Text style={styles.recordHint}>Transcribing…</Text>
     </View>
   );
 }
@@ -413,49 +442,51 @@ function TranscriptStage({
   onRetake: () => void;
 }) {
   return (
-    <View style={styles.transcriptContainer}>
-      <Text style={styles.transcriptLabel}>Transcript</Text>
-      <ScrollView style={styles.transcriptBubble}>
-        <Text style={styles.transcriptText}>{transcript}</Text>
-      </ScrollView>
-      <Pressable
+    <View style={styles.actionStack}>
+      <Text style={styles.sectionLabel}>Transcript</Text>
+      <Card style={styles.transcriptCard} padding="md">
+        <Text style={styles.transcriptText} numberOfLines={4}>
+          {transcript}
+        </Text>
+      </Card>
+      <PrimaryButton
+        label="Analyze"
+        icon="sparkles-outline"
         onPress={onAnalyze}
-        style={({ pressed }) => [
-          styles.transcribeButton,
-          pressed && styles.buttonPressed,
-        ]}
-      >
-        <Ionicons name="sparkles-outline" size={18} color="#fff" />
-        <Text style={styles.buttonLabel}>Analyze</Text>
-      </Pressable>
-      <Pressable onPress={onRetake} style={styles.retakeButton}>
-        <Text style={styles.retakeText}>Re-record</Text>
+        fullWidth
+      />
+      <Pressable onPress={onRetake} style={styles.linkButton}>
+        <Text style={styles.linkText}>Re-record</Text>
       </Pressable>
     </View>
   );
 }
 
-function AnalyzingStage() {
+function BusyStage({ label }: { label: string }) {
   return (
-    <View style={styles.recordContainer}>
-      <ActivityIndicator />
-      <Text style={styles.recordHint}>Analyzing…</Text>
+    <View style={styles.busyStage}>
+      <ActivityIndicator color={colors.textTertiary} />
+      <Text style={styles.busyLabel}>{label}</Text>
     </View>
   );
 }
 
-function AnalysisStage({
+function AnalysisChatView({
+  photo,
   transcript,
   analysis,
   chatMessages,
   chatPending,
+  analyzing,
   onSendChat,
   onRetake,
 }: {
+  photo: SavedPhoto;
   transcript: string;
-  analysis: AnalysisResult;
+  analysis: AnalysisResult | null;
   chatMessages: ChatMessage[];
   chatPending: boolean;
+  analyzing: boolean;
   onSendChat: (text: string) => void;
   onRetake: () => void;
 }) {
@@ -465,86 +496,50 @@ function AnalysisStage({
   useEffect(() => {
     const t = setTimeout(
       () => scrollRef.current?.scrollToEnd({ animated: true }),
-      50
+      60
     );
     return () => clearTimeout(t);
-  }, [chatMessages.length, chatPending]);
+  }, [chatMessages.length, chatPending, analyzing]);
 
-  const handleSubmit = () => {
-    const t = draft.trim();
-    if (!t || chatPending) return;
-    onSendChat(t);
+  const submit = () => {
+    const v = draft.trim();
+    if (!v || chatPending) return;
+    onSendChat(v);
     setDraft('');
   };
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.analysisOuter}
+      style={styles.chatRoot}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <ScrollView
         ref={scrollRef}
         style={styles.chatScroll}
-        contentContainerStyle={styles.analysisInner}
+        contentContainerStyle={styles.chatScrollInner}
         keyboardShouldPersistTaps="handled"
       >
-        <UserBubble>
-          <Text style={styles.userBubbleText}>{transcript}</Text>
-        </UserBubble>
+        <Image
+          source={{ uri: `${photo.photo_uri}?v=${photo.version}` }}
+          style={styles.chatPhoto}
+          contentFit="cover"
+        />
 
-        <AssistantBubble>
-          {analysis.corrected_sentences.length > 0 && (
-            <View style={styles.bubbleSection}>
-              <Text style={styles.bubbleSectionLabel}>Corrections</Text>
-              {analysis.corrected_sentences.map((c, i) => (
-                <View key={i} style={styles.bubbleSubBlock}>
-                  <Text style={styles.bubbleStrike}>{c.original}</Text>
-                  <Text style={styles.bubbleFixed}>→ {c.corrected}</Text>
-                  <Text style={styles.bubbleMeta}>
-                    {c.error_type}
-                    {c.is_common_for_chinese_speakers ? ' · 常见错误' : ''}
-                  </Text>
-                  {c.explanation ? (
-                    <Text style={styles.bubbleNote}>{c.explanation}</Text>
-                  ) : null}
-                </View>
-              ))}
-            </View>
-          )}
+        <UserBubble text={transcript} />
 
-          <View style={styles.bubbleSection}>
-            <Text style={styles.bubbleSectionLabel}>Polished</Text>
-            <Text style={styles.bubbleText}>
-              {analysis.polished_sentences.join(' ')}
-            </Text>
-          </View>
-
-          {analysis.chunks.length > 0 && (
-            <View style={styles.bubbleSection}>
-              <Text style={styles.bubbleSectionLabel}>Chunks to remember</Text>
-              {analysis.chunks.map((chunk) => (
-                <View key={chunk.id} style={styles.bubbleSubBlock}>
-                  <Text style={styles.bubbleChunk}>{chunk.chunk}</Text>
-                  {chunk.usage_note ? (
-                    <Text style={styles.bubbleNote}>{chunk.usage_note}</Text>
-                  ) : null}
-                  {chunk.examples.map((ex, i) => (
-                    <Text key={i} style={styles.bubbleExample}>
-                      · {ex.text}
-                    </Text>
-                  ))}
-                </View>
-              ))}
-            </View>
-          )}
-        </AssistantBubble>
+        {analysis ? (
+          <AnalysisBubble analysis={analysis} />
+        ) : analyzing ? (
+          <AssistantBubbleCenter>
+            <ActivityIndicator color={colors.textTertiary} />
+            <Text style={styles.busyLabel}>Analyzing…</Text>
+          </AssistantBubbleCenter>
+        ) : null}
 
         {chatMessages.map((m, i) =>
           m.role === 'user' ? (
-            <UserBubble key={i}>
-              <Text style={styles.userBubbleText}>{m.content}</Text>
-            </UserBubble>
+            <UserBubble key={i} text={m.content} />
           ) : (
             <AssistantBubble key={i}>
               <Text style={styles.bubbleText}>{m.content}</Text>
@@ -554,19 +549,24 @@ function AnalysisStage({
 
         {chatPending && (
           <AssistantBubble>
-            <ActivityIndicator />
+            <ActivityIndicator color={colors.textTertiary} />
           </AssistantBubble>
         )}
 
-        <View style={styles.analysisFooter}>
-          <View style={[styles.transcribeButton, styles.buttonDisabled]}>
-            <Ionicons name="sparkles-outline" size={18} color="#fff" />
-            <Text style={styles.buttonLabel}>Confirm & Generate (Step 9)</Text>
+        {analysis && (
+          <View style={styles.analysisFooter}>
+            <PrimaryButton
+              label="Confirm & Generate"
+              icon="sparkles-outline"
+              fullWidth
+              disabled
+              variant="amber"
+            />
+            <Pressable onPress={onRetake} style={styles.linkButton}>
+              <Text style={styles.linkText}>Re-record</Text>
+            </Pressable>
           </View>
-          <Pressable onPress={onRetake} style={styles.retakeButton}>
-            <Text style={styles.retakeText}>Re-record</Text>
-          </Pressable>
-        </View>
+        )}
       </ScrollView>
 
       <View style={styles.composer}>
@@ -575,69 +575,108 @@ function AnalysisStage({
           value={draft}
           onChangeText={setDraft}
           placeholder="Ask a follow-up…"
-          placeholderTextColor="#999"
-          editable={!chatPending}
+          placeholderTextColor={colors.textTertiary}
+          editable={!!analysis && !chatPending}
           multiline
           returnKeyType="send"
-          onSubmitEditing={handleSubmit}
+          onSubmitEditing={submit}
           blurOnSubmit
         />
         <Pressable
-          onPress={handleSubmit}
-          disabled={chatPending || draft.trim().length === 0}
+          onPress={submit}
+          disabled={!analysis || chatPending || draft.trim().length === 0}
           style={({ pressed }) => [
             styles.composerSend,
-            (chatPending || draft.trim().length === 0) && styles.buttonDisabled,
-            pressed && styles.buttonPressed,
+            (!analysis || chatPending || draft.trim().length === 0) && {
+              opacity: 0.4,
+            },
+            pressed && { opacity: 0.7 },
           ]}
         >
-          <Ionicons name="arrow-up" size={20} color="#fff" />
+          <Ionicons name="arrow-up" size={18} color={colors.textPrimary} />
         </Pressable>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-function UserBubble({ children }: { children: React.ReactNode }) {
+function UserBubble({ text }: { text: string }) {
   return (
-    <View style={styles.bubbleRowRight}>
-      <View style={[styles.bubble, styles.bubbleUser]}>{children}</View>
+    <View style={styles.userBubbleRow}>
+      <View style={styles.userBubble}>
+        <Text style={styles.userBubbleText}>{text}</Text>
+      </View>
     </View>
   );
 }
 
 function AssistantBubble({ children }: { children: React.ReactNode }) {
   return (
-    <View style={styles.bubbleRowLeft}>
-      <View style={[styles.bubble, styles.bubbleAssistant]}>{children}</View>
+    <View style={styles.assistantBubbleRow}>
+      <View style={styles.assistantBubble}>{children}</View>
     </View>
   );
 }
 
-function PickerButton({
-  label,
-  icon,
-  disabled,
-  onPress,
-}: {
-  label: string;
-  icon: React.ComponentProps<typeof Ionicons>['name'];
-  disabled: boolean;
-  onPress: () => void;
-}) {
+function AssistantBubbleCenter({ children }: { children: React.ReactNode }) {
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [
-        styles.button,
-        pressed && styles.buttonPressed,
-        disabled && styles.buttonDisabled,
-      ]}
-    >
-      <Ionicons name={icon} size={20} color="#fff" />
-      <Text style={styles.buttonLabel}>{label}</Text>
-    </Pressable>
+    <View style={styles.assistantBubbleRow}>
+      <View style={[styles.assistantBubble, styles.assistantBubbleCenter]}>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function AnalysisBubble({ analysis }: { analysis: AnalysisResult }) {
+  return (
+    <AssistantBubble>
+      {analysis.corrected_sentences.length > 0 && (
+        <View style={styles.bubbleSection}>
+          <Text style={styles.sectionLabel}>Corrections</Text>
+          {analysis.corrected_sentences.map((c, i) => (
+            <View key={i} style={styles.correctionBlock}>
+              <Text style={styles.correctionStrike}>{c.original}</Text>
+              <Text style={styles.correctionFixed}>{c.corrected}</Text>
+              {c.explanation ? (
+                <Text style={styles.correctionNote}>{c.explanation}</Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.bubbleSection}>
+        <Text style={styles.sectionLabel}>Polished</Text>
+        <Text style={styles.bubbleText}>
+          {analysis.polished_sentences.join(' ')}
+        </Text>
+      </View>
+
+      {analysis.chunks.length > 0 && (
+        <View style={styles.bubbleSection}>
+          <Text style={styles.sectionLabel}>Chunks to remember</Text>
+          <View style={styles.chunkRow}>
+            {analysis.chunks.map((chunk) => (
+              <Pill key={chunk.id} label={chunk.chunk} variant="chunk" />
+            ))}
+          </View>
+          {analysis.chunks.map((chunk) => (
+            <View key={`note-${chunk.id}`} style={styles.chunkNoteBlock}>
+              <Text style={styles.chunkNoteHeader}>{chunk.chunk}</Text>
+              {chunk.usage_note ? (
+                <Text style={styles.chunkNote}>{chunk.usage_note}</Text>
+              ) : null}
+              {chunk.examples.map((ex, i) => (
+                <Text key={i} style={styles.chunkExample}>
+                  · {ex.text}
+                </Text>
+              ))}
+            </View>
+          ))}
+        </View>
+      )}
+    </AssistantBubble>
   );
 }
 
@@ -664,264 +703,255 @@ function formatDuration(ms: number): string {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: colors.bg },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginTop: 16,
-  },
-  subtitle: {
-    fontSize: 14,
-    opacity: 0.6,
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 32,
-  },
-  button: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0a84ff',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 999,
-    gap: 8,
-  },
-  buttonPressed: {
-    opacity: 0.7,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonLabel: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  spinner: {
-    marginTop: 24,
+    padding: spacing.xl,
   },
   placeholderTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    ...text.cardTitle,
+    fontSize: 17,
+    marginBottom: 4,
   },
   placeholderSubtitle: {
-    fontSize: 14,
-    opacity: 0.6,
-    marginTop: 8,
+    ...text.caption,
   },
-  previewContainer: {
+
+  preContainer: {
     flex: 1,
-    padding: 16,
-    alignItems: 'center',
+    padding: spacing.lg,
+    gap: spacing.md,
   },
-  preview: {
+  photo: {
     width: '100%',
     aspectRatio: 1,
-    borderRadius: 16,
-    backgroundColor: '#eee',
+    borderRadius: radius.card,
+    backgroundColor: colors.pillBg,
   },
-  previewSmall: {
-    width: 120,
-    height: 120,
-    borderRadius: 12,
-    backgroundColor: '#eee',
-  },
-  recordContainer: {
-    marginTop: 24,
+  photoPlaceholder: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: radius.card,
+    backgroundColor: colors.card,
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'center',
+    gap: spacing.sm,
+    ...shadow,
+  },
+  photoHint: {
+    ...text.caption,
+    color: colors.textTertiary,
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  actionArea: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  recordCenter: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingBottom: spacing.lg,
   },
   timer: {
     fontSize: 28,
     fontVariant: ['tabular-nums'],
     fontWeight: '500',
-  },
-  recordButton: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: '#0a84ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordButtonActive: {
-    backgroundColor: '#ff3b30',
+    color: colors.textPrimary,
   },
   recordHint: {
-    fontSize: 13,
-    opacity: 0.6,
+    ...text.caption,
+    color: colors.textTertiary,
+  },
+  recordButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    ...shadow,
+  },
+  recordButtonRecording: {
+    backgroundColor: '#C84B4B',
+  },
+  actionStack: {
+    gap: spacing.md,
+    paddingBottom: spacing.lg,
   },
   recordedLabel: {
-    fontSize: 16,
-    fontWeight: '500',
+    ...text.cardTitle,
+    textAlign: 'center',
   },
-  transcribeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0a84ff',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 999,
-    gap: 8,
+  linkButton: {
+    alignSelf: 'center',
+    padding: spacing.sm,
   },
-  retakeButton: {
-    marginTop: 16,
-    padding: 8,
-  },
-  retakeText: {
-    color: '#0a84ff',
-    fontSize: 14,
-  },
-  transcriptContainer: {
-    marginTop: 24,
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    gap: 12,
-  },
-  transcriptLabel: {
-    fontSize: 13,
+  linkText: {
+    ...text.caption,
+    color: colors.accentText,
     fontWeight: '600',
-    opacity: 0.7,
-    alignSelf: 'flex-start',
   },
-  transcriptBubble: {
-    alignSelf: 'stretch',
-    maxHeight: 180,
-    backgroundColor: '#f1f3f5',
-    borderRadius: 12,
-    padding: 12,
+  busyStage: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+  },
+  busyLabel: {
+    ...text.caption,
+  },
+
+  sectionLabel: {
+    ...text.micro,
+    marginBottom: 6,
+  },
+  transcriptCard: {
+    backgroundColor: colors.card,
   },
   transcriptText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#222',
+    ...text.body,
   },
-  analysisOuter: {
+
+  chatRoot: {
     flex: 1,
-    alignSelf: 'stretch',
-    marginTop: 16,
-  },
-  analysisInner: {
-    paddingBottom: 24,
-    gap: 8,
-  },
-  bubbleRowRight: {
-    alignItems: 'flex-end',
-  },
-  bubbleRowLeft: {
-    alignItems: 'flex-start',
-  },
-  bubble: {
-    maxWidth: '85%',
-    padding: 12,
-    borderRadius: 16,
-  },
-  bubbleUser: {
-    backgroundColor: '#0a84ff',
-    borderBottomRightRadius: 4,
-  },
-  bubbleAssistant: {
-    backgroundColor: '#f1f3f5',
-    borderBottomLeftRadius: 4,
-  },
-  userBubbleText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#fff',
-  },
-  bubbleText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#222',
-  },
-  bubbleSection: {
-    marginTop: 8,
-  },
-  bubbleSectionLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    opacity: 0.55,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-  },
-  bubbleSubBlock: {
-    marginTop: 6,
-  },
-  bubbleStrike: {
-    fontSize: 14,
-    color: '#888',
-    textDecorationLine: 'line-through',
-  },
-  bubbleFixed: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#222',
-    marginTop: 2,
-  },
-  bubbleMeta: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-  bubbleNote: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#444',
-    marginTop: 2,
-  },
-  bubbleChunk: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#222',
-  },
-  bubbleExample: {
-    fontSize: 13,
-    color: '#222',
-    marginTop: 2,
-  },
-  analysisFooter: {
-    marginTop: 12,
-    alignItems: 'center',
-    gap: 4,
   },
   chatScroll: {
     flex: 1,
   },
+  chatScrollInner: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing.xxl,
+  },
+  chatPhoto: {
+    width: '100%',
+    height: 180,
+    borderRadius: radius.card,
+    backgroundColor: colors.pillBg,
+  },
+  userBubbleRow: {
+    alignItems: 'flex-end',
+  },
+  userBubble: {
+    maxWidth: '85%',
+    backgroundColor: colors.textPrimary,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: radius.inner,
+    borderBottomRightRadius: 4,
+  },
+  userBubbleText: {
+    color: colors.card,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  assistantBubbleRow: {
+    alignItems: 'flex-start',
+  },
+  assistantBubble: {
+    maxWidth: '95%',
+    backgroundColor: colors.card,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: radius.card,
+    borderBottomLeftRadius: 6,
+    ...shadow,
+  },
+  assistantBubbleCenter: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  bubbleText: {
+    ...text.body,
+  },
+  bubbleSection: {
+    marginTop: spacing.md,
+  },
+  correctionBlock: {
+    marginTop: 8,
+  },
+  correctionStrike: {
+    fontSize: 14,
+    color: colors.textTertiary,
+    textDecorationLine: 'line-through',
+  },
+  correctionFixed: {
+    fontSize: 15,
+    color: colors.textPrimary,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  correctionNote: {
+    fontSize: 13,
+    color: colors.textTertiary,
+    fontStyle: 'italic',
+    marginTop: 4,
+    lineHeight: 19,
+  },
+  chunkRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: spacing.sm,
+  },
+  chunkNoteBlock: {
+    marginTop: 10,
+  },
+  chunkNoteHeader: {
+    fontSize: 14,
+    color: colors.accentText,
+    fontWeight: '700',
+  },
+  chunkNote: {
+    fontSize: 13,
+    color: colors.textPrimary,
+    marginTop: 2,
+    lineHeight: 19,
+  },
+  chunkExample: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  analysisFooter: {
+    marginTop: spacing.lg,
+    gap: spacing.sm,
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 8,
-    gap: 8,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+    gap: spacing.sm,
+    backgroundColor: colors.bg,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#ddd',
+    borderTopColor: colors.separator,
   },
   composerInput: {
     flex: 1,
-    maxHeight: 120,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: '#f1f3f5',
-    borderRadius: 20,
+    backgroundColor: colors.pillBg,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
     fontSize: 15,
-    color: '#222',
+    color: colors.textPrimary,
+    minHeight: 40,
+    maxHeight: 120,
   },
   composerSend: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#0a84ff',
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
