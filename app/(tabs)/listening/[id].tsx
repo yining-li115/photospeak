@@ -1,19 +1,71 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Card } from '../../../src/components/Card';
 import { Pill } from '../../../src/components/Pill';
+import { getSession } from '../../../src/db/sessions';
+import {
+  useSentencePlayer,
+  type PlaybackSpeed,
+} from '../../../src/hooks/useSentencePlayer';
 import { colors, radius, spacing, text } from '../../../src/theme';
+import type { Session } from '../../../src/types';
 
-const PLACEHOLDER_SENTENCES = [
-  'The photo captures a quiet morning street washed in golden light.',
-  'A woman in a long coat is walking past the bakery on the corner.',
-  'Her shadow stretches across the cobblestones, long and thin.',
-];
+const SPEEDS: PlaybackSpeed[] = [0.75, 1, 1.25];
 
 export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const activeIndex = 1;
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const s = await getSession(id);
+      if (!cancelled) {
+        setSession(s);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <Stack.Screen options={{ title: 'Player' }} />
+        <ActivityIndicator color={colors.textTertiary} />
+      </View>
+    );
+  }
+
+  if (!session) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <Stack.Screen options={{ title: 'Player' }} />
+        <Text style={text.cardTitle}>Session not found</Text>
+      </View>
+    );
+  }
+
+  return <PlayerView session={session} />;
+}
+
+function PlayerView({ session }: { session: Session }) {
+  const sentences = session.polished_sentences;
+  const audioUris = session.sentence_audio_uris;
+  const player = useSentencePlayer(audioUris);
 
   return (
     <View style={styles.container}>
@@ -23,54 +75,110 @@ export default function PlayerScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.photoPlaceholder}>
-          <Ionicons
-            name="image-outline"
-            size={36}
-            color={colors.textTertiary}
-          />
-        </View>
+        <Image
+          source={{ uri: session.photo_uri }}
+          style={styles.photo}
+          contentFit="cover"
+        />
 
-        <Card style={styles.sentenceCard} padding="md">
-          {PLACEHOLDER_SENTENCES.map((s, i) => (
-            <View key={i} style={styles.sentenceRow}>
-              <View
-                style={[
-                  styles.activeBar,
-                  i === activeIndex && styles.activeBarOn,
-                ]}
-              />
-              <Text
-                style={[
-                  styles.sentenceText,
-                  i === activeIndex && styles.sentenceTextActive,
-                ]}
-              >
-                {s}
-              </Text>
+        {audioUris.length === 0 ? (
+          <Card padding="lg">
+            <Text style={text.body}>
+              No audio yet. Confirm & Generate this session in the Sessions
+              tab to create the podcast.
+            </Text>
+          </Card>
+        ) : (
+          <>
+            <Card style={styles.sentenceCard} padding="md">
+              {sentences.map((s, i) => {
+                const active = i === player.currentIndex;
+                const looping = active && player.loopSingle;
+                return (
+                  <Pressable
+                    key={i}
+                    onPress={() => player.playFrom(i, { loop: true })}
+                    style={({ pressed }) => [
+                      styles.sentenceRow,
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.activeBar,
+                        active && styles.activeBarOn,
+                      ]}
+                    />
+                    <View style={styles.sentenceTextWrap}>
+                      <Text
+                        style={[
+                          styles.sentenceText,
+                          active && styles.sentenceTextActive,
+                        ]}
+                      >
+                        {s}
+                      </Text>
+                      {looping && (
+                        <View style={styles.loopTag}>
+                          <Ionicons
+                            name="repeat"
+                            size={12}
+                            color={colors.accentText}
+                          />
+                          <Text style={styles.loopTagText}>Looping</Text>
+                        </View>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </Card>
+
+            <View style={styles.speedRow}>
+              {SPEEDS.map((s) => (
+                <Pill
+                  key={s}
+                  label={`${s}×`}
+                  active={player.speed === s}
+                  onPress={() => player.setSpeed(s)}
+                />
+              ))}
             </View>
-          ))}
-        </Card>
 
-        <View style={styles.speedRow}>
-          <Pill label="0.75×" onPress={() => {}} />
-          <Pill label="1×" active onPress={() => {}} />
-          <Pill label="1.25×" onPress={() => {}} />
-        </View>
+            <View style={styles.controls}>
+              <ControlButton
+                icon="play-skip-back"
+                onPress={player.prev}
+                disabled={player.currentIndex === 0}
+              />
+              <Pressable
+                onPress={player.togglePlay}
+                style={({ pressed }) => [
+                  styles.playButton,
+                  pressed && { opacity: 0.85 },
+                  !player.isLoaded && { opacity: 0.5 },
+                ]}
+                disabled={!player.isLoaded}
+              >
+                <Ionicons
+                  name={player.isPlaying ? 'pause' : 'play'}
+                  size={28}
+                  color={colors.textPrimary}
+                />
+              </Pressable>
+              <ControlButton
+                icon="play-skip-forward"
+                onPress={player.next}
+                disabled={player.currentIndex >= sentences.length - 1}
+              />
+            </View>
 
-        <View style={styles.controls}>
-          <ControlButton icon="play-skip-back" />
-          <View style={styles.playButton}>
-            <Ionicons name="play" size={26} color={colors.textPrimary} />
-          </View>
-          <ControlButton icon="play-skip-forward" />
-        </View>
-
-        <Text style={styles.note}>id: {id}</Text>
-        <Text style={styles.placeholderNote}>
-          Player UI is a Phase 2 placeholder — Step 11 will wire real audio
-          playback.
-        </Text>
+            <Text style={styles.tapHint}>
+              Tap any sentence to loop it. Tap again to stop looping with
+              prev/next.
+            </Text>
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -78,29 +186,43 @@ export default function PlayerScreen() {
 
 function ControlButton({
   icon,
+  onPress,
+  disabled,
 }: {
   icon: React.ComponentProps<typeof Ionicons>['name'];
+  onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <View style={styles.sideButton}>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.sideButton,
+        pressed && !disabled && { opacity: 0.7 },
+        disabled && { opacity: 0.4 },
+      ]}
+    >
       <Ionicons name={icon} size={20} color={colors.textSecondary} />
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  center: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   content: {
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  photoPlaceholder: {
+  photo: {
     width: '100%',
     aspectRatio: 1,
     borderRadius: radius.card,
     backgroundColor: colors.pillBg,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   sentenceCard: {
     paddingVertical: spacing.md,
@@ -120,8 +242,10 @@ const styles = StyleSheet.create({
   activeBarOn: {
     backgroundColor: colors.accent,
   },
-  sentenceText: {
+  sentenceTextWrap: {
     flex: 1,
+  },
+  sentenceText: {
     fontSize: 15,
     lineHeight: 22,
     color: colors.textTertiary,
@@ -129,6 +253,22 @@ const styles = StyleSheet.create({
   sentenceTextActive: {
     color: colors.textPrimary,
     fontWeight: '700',
+  },
+  loopTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accentBgSoft,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  loopTagText: {
+    fontSize: 11,
+    color: colors.accentText,
+    fontWeight: '600',
   },
   speedRow: {
     flexDirection: 'row',
@@ -157,11 +297,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  note: {
-    ...text.caption,
-    textAlign: 'center',
-  },
-  placeholderNote: {
+  tapHint: {
     ...text.caption,
     color: colors.textTertiary,
     textAlign: 'center',
