@@ -275,7 +275,10 @@ export default function SessionDetailScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen
-        options={{ title: mode === 'new' ? 'New session' : 'Session' }}
+        options={{
+          title: mode === 'new' ? 'New session' : 'Session',
+          headerBackTitle: 'Sessions',
+        }}
       />
 
       {mode === 'loading' && (

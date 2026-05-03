@@ -45,7 +45,7 @@ export default function PlayerScreen() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center]}>
-        <Stack.Screen options={{ title: 'Player' }} />
+        <Stack.Screen options={{ title: 'Player', headerBackTitle: 'Listening' }} />
         <ActivityIndicator color={colors.textTertiary} />
       </View>
     );
@@ -54,7 +54,7 @@ export default function PlayerScreen() {
   if (!session) {
     return (
       <View style={[styles.container, styles.center]}>
-        <Stack.Screen options={{ title: 'Player' }} />
+        <Stack.Screen options={{ title: 'Player', headerBackTitle: 'Listening' }} />
         <Text style={text.cardTitle}>Session not found</Text>
       </View>
     );
@@ -115,7 +115,7 @@ function PlayerView({ session }: { session: Session }) {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: 'Player' }} />
+      <Stack.Screen options={{ title: 'Player', headerBackTitle: 'Listening' }} />
 
       <ScrollView
         contentContainerStyle={styles.content}

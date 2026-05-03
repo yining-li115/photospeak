@@ -57,7 +57,7 @@ export default function SessionsScreen() {
             pressed && { opacity: 0.85 },
           ]}
         >
-          <Ionicons name="add" size={22} color={colors.textPrimary} />
+          <Text style={styles.addButtonGlyph}>+</Text>
         </Pressable>
       </View>
 
@@ -147,6 +147,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  addButtonGlyph: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: colors.textPrimary,
+    lineHeight: 26,
+    marginTop: -2,
   },
   listContent: {
     padding: spacing.lg,
