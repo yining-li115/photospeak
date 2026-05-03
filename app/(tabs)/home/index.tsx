@@ -13,11 +13,19 @@ import {
 } from '../../../src/db/stats';
 import { colors, spacing, text } from '../../../src/theme';
 
-const WEEK_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const HEATMAP_WEEKS = 16;
+const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
+const HEATMAP_DAY_LABELS = ['', 'T', '', 'T', '', 'S', ''];
+
+interface HeatmapCell {
+  date: string;
+  count: number;
+  isFuture: boolean;
+}
 
 interface HomeStats {
   streak: number;
-  weekDoneFlags: boolean[];
+  heatmap: HeatmapCell[];
   weekListeningSeconds: number;
   totalListeningSeconds: number;
   cardsMastered: number;
@@ -26,7 +34,7 @@ interface HomeStats {
 
 const ZERO_STATS: HomeStats = {
   streak: 0,
-  weekDoneFlags: [false, false, false, false, false, false, false],
+  heatmap: [],
   weekListeningSeconds: 0,
   totalListeningSeconds: 0,
   cardsMastered: 0,
@@ -36,7 +44,6 @@ const ZERO_STATS: HomeStats = {
 export default function HomeScreen() {
   const [stats, setStats] = useState<HomeStats>(ZERO_STATS);
   const greeting = currentGreeting();
-  const todayIndex = (new Date().getDay() + 6) % 7; // Mon=0..Sun=6
 
   useFocusEffect(
     useCallback(() => {
@@ -75,30 +82,23 @@ export default function HomeScreen() {
             </Text>
           </View>
 
-          <View style={styles.weekStrip}>
-            {WEEK_LABELS.map((label, i) => {
-              const done = stats.weekDoneFlags[i];
-              const isToday = i === todayIndex;
-              return (
-                <View key={i} style={styles.dayCell}>
-                  <View
-                    style={[
-                      styles.dayDot,
-                      done && styles.dayDotDone,
-                      isToday && !done && styles.dayDotToday,
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.dayLabel,
-                      isToday && styles.dayLabelToday,
-                    ]}
-                  >
-                    {label}
-                  </Text>
-                </View>
-              );
-            })}
+          <Heatmap cells={stats.heatmap} />
+
+          <View style={styles.heatmapLegendRow}>
+            <Text style={styles.heatmapHint}>Last {HEATMAP_WEEKS} weeks</Text>
+            <View style={styles.heatmapLegend}>
+              <Text style={styles.heatmapHint}>Less</Text>
+              {[0, 1, 2, 3].map((lvl) => (
+                <View
+                  key={lvl}
+                  style={[
+                    styles.legendCell,
+                    { backgroundColor: levelColor(lvl) },
+                  ]}
+                />
+              ))}
+              <Text style={styles.heatmapHint}>More</Text>
+            </View>
           </View>
         </Card>
 
@@ -148,40 +148,103 @@ async function loadHomeStats(): Promise<HomeStats> {
   const monday = startOfWeekMonday(now);
   const mondayIso = isoDay(monday);
 
+  const heatmapDates = buildHeatmapDates(now);
+  const heatmapStart = heatmapDates[0];
+  const heatmapEnd = heatmapDates[heatmapDates.length - 1];
+
   const [
     streak,
-    weekRows,
+    heatmapRows,
     weekListening,
     totalListening,
     cardsMastered,
     dueCards,
   ] = await Promise.all([
     getCurrentStreak(today),
-    getStatsRange(mondayIso, today),
+    getStatsRange(heatmapStart, heatmapEnd),
     getListeningSecondsBetween(mondayIso, today),
     getTotalListeningSeconds(),
     countMasteredCards(),
     listCardsDueBy(now.toISOString()),
   ]);
 
-  const doneSet = new Set(
-    weekRows.filter((r) => r.session_count > 0).map((r) => r.date)
+  const countByDate = new Map(
+    heatmapRows.map((r) => [r.date, r.session_count])
   );
-  const weekDoneFlags: boolean[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setUTCDate(monday.getUTCDate() + i);
-    weekDoneFlags.push(doneSet.has(isoDay(d)));
-  }
+  const heatmap: HeatmapCell[] = heatmapDates.map((date) => ({
+    date,
+    count: countByDate.get(date) ?? 0,
+    isFuture: date > today,
+  }));
 
   return {
     streak,
-    weekDoneFlags,
+    heatmap,
     weekListeningSeconds: weekListening,
     totalListeningSeconds: totalListening,
     cardsMastered,
     cardsDueToday: dueCards.length,
   };
+}
+
+function buildHeatmapDates(today: Date): string[] {
+  // Anchor on the Monday of the current week, then walk back
+  // (HEATMAP_WEEKS - 1) full weeks. The grid reads left→right as
+  // oldest→newest week; each column is M..S top→bottom.
+  const thisMonday = startOfWeekMonday(today);
+  const start = new Date(thisMonday);
+  start.setUTCDate(thisMonday.getUTCDate() - (HEATMAP_WEEKS - 1) * 7);
+
+  const dates: string[] = [];
+  for (let i = 0; i < HEATMAP_DAYS; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    dates.push(isoDay(d));
+  }
+  return dates;
+}
+
+function Heatmap({ cells }: { cells: HeatmapCell[] }) {
+  // Group cells into weeks (columns) of 7 days each.
+  const weeks: HeatmapCell[][] = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    weeks.push(cells.slice(i, i + 7));
+  }
+
+  return (
+    <View style={styles.heatmapRow}>
+      <View style={styles.heatmapDayLabels}>
+        {HEATMAP_DAY_LABELS.map((label, i) => (
+          <Text key={i} style={styles.heatmapDayLabel}>
+            {label}
+          </Text>
+        ))}
+      </View>
+      <View style={styles.heatmapGrid}>
+        {weeks.map((week, wi) => (
+          <View key={wi} style={styles.heatmapWeek}>
+            {week.map((day) => (
+              <View
+                key={day.date}
+                style={[
+                  styles.heatCell,
+                  { backgroundColor: levelColor(day.count) },
+                  day.isFuture && styles.heatCellFuture,
+                ]}
+              />
+            ))}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function levelColor(count: number): string {
+  if (count <= 0) return '#EDE9E3'; // pillBg
+  if (count === 1) return '#FBE3B5';
+  if (count === 2) return '#F2C572';
+  return '#E8A84A'; // accent
 }
 
 function isoDay(d: Date): string {
@@ -275,37 +338,59 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '500',
   },
-  weekStrip: {
+  heatmapRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  heatmapDayLabels: {
+    justifyContent: 'space-between',
+    height: 7 * 14 + 6 * 3,
+  },
+  heatmapDayLabel: {
+    fontSize: 9,
+    color: colors.textTertiary,
+    lineHeight: 14,
+    width: 10,
+    textAlign: 'right',
+  },
+  heatmapGrid: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  heatmapWeek: {
+    flexDirection: 'column',
+    gap: 3,
+  },
+  heatCell: {
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    backgroundColor: colors.pillBg,
+  },
+  heatCellFuture: {
+    opacity: 0.35,
+  },
+  heatmapLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: spacing.sm,
   },
-  dayCell: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  dayDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.pillBg,
-  },
-  dayDotDone: {
-    backgroundColor: colors.accent,
-  },
-  dayDotToday: {
-    backgroundColor: colors.bg,
-    borderWidth: 1.5,
-    borderColor: colors.accent,
-  },
-  dayLabel: {
+  heatmapHint: {
     fontSize: 11,
     color: colors.textTertiary,
-    fontWeight: '500',
   },
-  dayLabelToday: {
-    color: colors.textPrimary,
-    fontWeight: '700',
+  heatmapLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  legendCell: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
   },
   statsCard: {
     paddingVertical: spacing.sm,
