@@ -340,6 +340,7 @@ export default function SessionDetailScreen() {
           onPick={handlePick}
           onToggleRecord={handleToggleRecord}
           onTranscribe={handleTranscribe}
+          onTranscriptChange={setTranscript}
           onAnalyze={handleAnalyze}
           onRetakeRecording={handleRetakeRecording}
         />
@@ -360,6 +361,7 @@ function PreAnalysisView({
   onPick,
   onToggleRecord,
   onTranscribe,
+  onTranscriptChange,
   onAnalyze,
   onRetakeRecording,
 }: {
@@ -374,6 +376,7 @@ function PreAnalysisView({
   onPick: (source: 'random' | 'choose') => void;
   onToggleRecord: () => void;
   onTranscribe: () => void;
+  onTranscriptChange: (text: string) => void;
   onAnalyze: () => void;
   onRetakeRecording: () => void;
 }) {
@@ -401,6 +404,7 @@ function PreAnalysisView({
           {transcript ? (
             <TranscriptStage
               transcript={transcript}
+              onChange={onTranscriptChange}
               onAnalyze={onAnalyze}
               onRetake={onRetakeRecording}
             />
@@ -517,26 +521,39 @@ function RecordingDoneStage({
 
 function TranscriptStage({
   transcript,
+  onChange,
   onAnalyze,
   onRetake,
 }: {
   transcript: string;
+  onChange: (text: string) => void;
   onAnalyze: () => void;
   onRetake: () => void;
 }) {
   return (
     <View style={styles.actionStack}>
-      <Text style={styles.sectionLabel}>Transcript</Text>
+      <View style={styles.transcriptHeader}>
+        <Text style={styles.sectionLabel}>Transcript</Text>
+        <Text style={styles.transcriptHint}>Tap to edit</Text>
+      </View>
       <Card style={styles.transcriptCard} padding="md">
-        <Text style={styles.transcriptText} numberOfLines={4}>
-          {transcript}
-        </Text>
+        <TextInput
+          style={styles.transcriptInput}
+          value={transcript}
+          onChangeText={onChange}
+          multiline
+          textAlignVertical="top"
+          scrollEnabled
+          placeholder="Edit your transcript here…"
+          placeholderTextColor={colors.textTertiary}
+        />
       </Card>
       <PrimaryButton
         label="Analyze"
         icon="sparkles-outline"
         onPress={onAnalyze}
         fullWidth
+        disabled={transcript.trim().length === 0}
       />
       <Pressable onPress={onRetake} style={styles.linkButton}>
         <Text style={styles.linkText}>Re-record</Text>
@@ -945,9 +962,26 @@ const styles = StyleSheet.create({
   },
   transcriptCard: {
     backgroundColor: colors.card,
+    maxHeight: 200,
   },
   transcriptText: {
     ...text.body,
+  },
+  transcriptHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  transcriptHint: {
+    ...text.caption,
+    color: colors.textTertiary,
+    fontSize: 11,
+  },
+  transcriptInput: {
+    ...text.body,
+    minHeight: 80,
+    maxHeight: 180,
+    padding: 0,
   },
 
   chatRoot: {
