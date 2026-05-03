@@ -10,12 +10,13 @@ Setup (one-time):
 
 Run:
     python scripts/local_whisper_server.py
-    # Listens on http://0.0.0.0:8081 by default.
+    # Listens on http://0.0.0.0:8090 by default.
+    # 8090 was picked to avoid Expo dev server (8081) and common dev ports.
     # Override the model with WHISPER_MODEL=small.en (default: base.en).
     # Override the port with PORT=9000.
 
 Wire it up in PhotoSpeak (.env):
-    EXPO_PUBLIC_WHISPER_ENDPOINT=http://localhost:8081/v1/audio/transcriptions
+    EXPO_PUBLIC_WHISPER_ENDPOINT=http://localhost:8090/v1/audio/transcriptions
     EXPO_PUBLIC_OPENAI_API_KEY=local
 
 iOS Simulator can reach the host machine via localhost. For a real device
@@ -81,6 +82,6 @@ async def transcribe(
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8081"))
+    port = int(os.environ.get("PORT", "8090"))
     print(f"[local-whisper] Listening on http://0.0.0.0:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
