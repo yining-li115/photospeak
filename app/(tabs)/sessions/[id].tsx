@@ -20,7 +20,7 @@ import {
   MimoError,
   type AnalysisResult,
 } from '../../../src/api/mimo';
-import { transcribeAudio, WhisperError } from '../../../src/api/whisper';
+import { transcribeAudio } from '../../../src/api/stt';
 import { getSession } from '../../../src/db/sessions';
 import type { ChatMessage } from '../../../src/types';
 import { useRecorder } from '../../../src/hooks/useAudioRecorder';
@@ -137,7 +137,7 @@ export default function SessionDetailScreen() {
       }
       setTranscript(text);
     } catch (e) {
-      const msg = e instanceof WhisperError ? e.message : String(e);
+      const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Transcription failed', msg);
     } finally {
       setTranscribing(false);
