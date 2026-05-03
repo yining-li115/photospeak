@@ -93,11 +93,10 @@ function PlayerView({ session }: { session: Session }) {
             <Card style={styles.sentenceCard} padding="md">
               {sentences.map((s, i) => {
                 const active = i === player.currentIndex;
-                const looping = active && player.loopSingle;
                 return (
                   <Pressable
                     key={i}
-                    onPress={() => player.playFrom(i, { loop: true })}
+                    onPress={() => player.playFrom(i)}
                     style={({ pressed }) => [
                       styles.sentenceRow,
                       pressed && { opacity: 0.7 },
@@ -109,26 +108,14 @@ function PlayerView({ session }: { session: Session }) {
                         active && styles.activeBarOn,
                       ]}
                     />
-                    <View style={styles.sentenceTextWrap}>
-                      <Text
-                        style={[
-                          styles.sentenceText,
-                          active && styles.sentenceTextActive,
-                        ]}
-                      >
-                        {s}
-                      </Text>
-                      {looping && (
-                        <View style={styles.loopTag}>
-                          <Ionicons
-                            name="repeat"
-                            size={12}
-                            color={colors.accentText}
-                          />
-                          <Text style={styles.loopTagText}>Looping</Text>
-                        </View>
-                      )}
-                    </View>
+                    <Text
+                      style={[
+                        styles.sentenceText,
+                        active && styles.sentenceTextActive,
+                      ]}
+                    >
+                      {s}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -173,9 +160,34 @@ function PlayerView({ session }: { session: Session }) {
               />
             </View>
 
+            <Pressable
+              onPress={player.toggleLoopMode}
+              style={({ pressed }) => [
+                styles.modeToggle,
+                player.loopSingle && styles.modeToggleActive,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <Ionicons
+                name="repeat"
+                size={16}
+                color={
+                  player.loopSingle ? colors.accentText : colors.textSecondary
+                }
+              />
+              <Text
+                style={[
+                  styles.modeToggleLabel,
+                  player.loopSingle && styles.modeToggleLabelActive,
+                ]}
+              >
+                {player.loopSingle ? 'Looping current sentence' : 'Play through'}
+              </Text>
+            </Pressable>
+
             <Text style={styles.tapHint}>
-              Tap any sentence to loop it. Tap again to stop looping with
-              prev/next.
+              Tap any sentence to start there. Use the loop toggle above to
+              repeat the current sentence.
             </Text>
           </>
         )}
@@ -242,10 +254,8 @@ const styles = StyleSheet.create({
   activeBarOn: {
     backgroundColor: colors.accent,
   },
-  sentenceTextWrap: {
-    flex: 1,
-  },
   sentenceText: {
+    flex: 1,
     fontSize: 15,
     lineHeight: 22,
     color: colors.textTertiary,
@@ -254,21 +264,26 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
-  loopTag: {
+  modeToggle: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-    alignSelf: 'flex-start',
-    backgroundColor: colors.accentBgSoft,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
+    alignSelf: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.pillBg,
   },
-  loopTagText: {
-    fontSize: 11,
-    color: colors.accentText,
+  modeToggleActive: {
+    backgroundColor: colors.accentBgSoft,
+  },
+  modeToggleLabel: {
+    fontSize: 13,
+    color: colors.textSecondary,
     fontWeight: '600',
+  },
+  modeToggleLabelActive: {
+    color: colors.accentText,
   },
   speedRow: {
     flexDirection: 'row',

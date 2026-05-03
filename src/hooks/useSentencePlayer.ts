@@ -14,9 +14,10 @@ export interface UseSentencePlayer {
   loopSingle: boolean;
   speed: PlaybackSpeed;
   togglePlay: () => void;
+  toggleLoopMode: () => void;
   next: () => void;
   prev: () => void;
-  playFrom: (index: number, opts?: { loop?: boolean }) => void;
+  playFrom: (index: number) => void;
   setSpeed: (speed: PlaybackSpeed) => void;
 }
 
@@ -99,10 +100,9 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
   }, [player, status.playing]);
 
   const playFrom = useCallback(
-    (index: number, opts?: { loop?: boolean }) => {
+    (index: number) => {
       if (index < 0 || index >= uris.length) return;
       handledFinishRef.current = false;
-      setLoopSingle(opts?.loop ?? false);
       setCurrentIndex(index);
       player.replace(uris[index]);
       // Same race as the auto-advance path — let the native source attach.
@@ -120,13 +120,17 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
 
   const next = useCallback(() => {
     if (currentIndex + 1 >= uris.length) return;
-    playFrom(currentIndex + 1, { loop: false });
+    playFrom(currentIndex + 1);
   }, [currentIndex, uris.length, playFrom]);
 
   const prev = useCallback(() => {
     if (currentIndex - 1 < 0) return;
-    playFrom(currentIndex - 1, { loop: false });
+    playFrom(currentIndex - 1);
   }, [currentIndex, playFrom]);
+
+  const toggleLoopMode = useCallback(() => {
+    setLoopSingle((v) => !v);
+  }, []);
 
   const setSpeed = useCallback((s: PlaybackSpeed) => {
     setSpeedState(s);
@@ -139,6 +143,7 @@ export function useSentencePlayer(uris: string[]): UseSentencePlayer {
     loopSingle,
     speed,
     togglePlay,
+    toggleLoopMode,
     next,
     prev,
     playFrom,
