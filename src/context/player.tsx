@@ -67,13 +67,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     queueRef.current = queue;
   }, [queue]);
 
-  // Configure background audio + silent-mode playback once.
+  // Configure audio session. Split into two calls because
+  // shouldPlayInBackground requires native UIBackgroundModes config and
+  // can fail on dev builds that haven't been rebuilt — we don't want
+  // that failure to take down the basic playback config.
   useEffect(() => {
     setAudioModeAsync({
       allowsRecording: false,
       playsInSilentMode: true,
-      shouldPlayInBackground: true,
     }).catch(() => {});
+    setAudioModeAsync({ shouldPlayInBackground: true }).catch(() => {});
   }, []);
 
   // Native loop reflects mode.

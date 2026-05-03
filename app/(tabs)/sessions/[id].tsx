@@ -27,7 +27,7 @@ import {
 } from '../../../src/services/generate';
 import { Pill } from '../../../src/components/Pill';
 import { PrimaryButton } from '../../../src/components/PrimaryButton';
-import { getSession } from '../../../src/db/sessions';
+import { getSession, updateSession } from '../../../src/db/sessions';
 import { useRecorder } from '../../../src/hooks/useAudioRecorder';
 import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
 import {
@@ -75,6 +75,20 @@ export default function SessionDetailScreen() {
       if (cancelled) return;
       if (s) {
         setExistingSession(s);
+        // Hydrate the same state shape new-session mode uses, so we can
+        // reuse AnalysisChatView for archived chat replay.
+        setPhoto({
+          photo_uri: s.photo_uri,
+          photo_thumbnail_uri: s.photo_thumbnail_uri,
+          version: 0,
+        });
+        setTranscript(s.transcript);
+        setAnalysis({
+          corrected_sentences: s.corrected_sentences,
+          polished_sentences: s.polished_sentences,
+          chunks: s.chunks,
+        });
+        setChatMessages(s.chat_history);
         setMode('existing');
       } else {
         setMode('new');
@@ -190,10 +204,21 @@ export default function SessionDetailScreen() {
         history: historyForApi,
         question: trimmed,
       });
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: reply, timestamp: new Date().toISOString() },
-      ]);
+      const assistantMsg: ChatMessage = {
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toISOString(),
+      };
+      setChatMessages((prev) => {
+        const next = [...prev, assistantMsg];
+        // Existing sessions persist follow-ups so the replay survives
+        // app restarts. New sessions persist the whole bundle at
+        // Confirm & Generate time, so we don't write here.
+        if (mode === 'existing') {
+          updateSession(id, { chat_history: next }).catch(() => {});
+        }
+        return next;
+      });
     } catch (e) {
       Alert.alert('Reply failed', e instanceof Error ? e.message : String(e));
       setChatMessages((prev) => prev.slice(0, -1));
@@ -259,13 +284,16 @@ export default function SessionDetailScreen() {
         </View>
       )}
 
-      {mode === 'existing' && existingSession && (
-        <View style={styles.center}>
-          <Text style={styles.placeholderTitle}>Session detail</Text>
-          <Text style={styles.placeholderSubtitle}>
-            Chat replay — coming soon
-          </Text>
-        </View>
+      {mode === 'existing' && photo && transcript && analysis && (
+        <AnalysisChatView
+          photo={photo}
+          transcript={transcript}
+          analysis={analysis}
+          chatMessages={chatMessages}
+          chatPending={chatPending}
+          analyzing={false}
+          onSendChat={handleSendChat}
+        />
       )}
 
       {mode === 'new' && analysis && transcript && photo ? (
@@ -530,8 +558,8 @@ function AnalysisChatView({
   chatMessages,
   chatPending,
   analyzing,
-  generating,
-  generateProgress,
+  generating = false,
+  generateProgress = null,
   onSendChat,
   onConfirm,
   onRetake,
@@ -542,11 +570,11 @@ function AnalysisChatView({
   chatMessages: ChatMessage[];
   chatPending: boolean;
   analyzing: boolean;
-  generating: boolean;
-  generateProgress: GenerateProgress | null;
+  generating?: boolean;
+  generateProgress?: GenerateProgress | null;
   onSendChat: (text: string) => void;
-  onConfirm: () => void;
-  onRetake: () => void;
+  onConfirm?: () => void;
+  onRetake?: () => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const [draft, setDraft] = useState('');
@@ -611,12 +639,12 @@ function AnalysisChatView({
           </AssistantBubble>
         )}
 
-        {analysis && (
+        {analysis && onConfirm && (
           <View style={styles.analysisFooter}>
             <PrimaryButton
               label={
                 generating
-                  ? formatGenerateProgress(generateProgress)
+                  ? formatGenerateProgress(generateProgress ?? null)
                   : 'Confirm & Generate'
               }
               icon={generating ? undefined : 'sparkles-outline'}
@@ -630,12 +658,14 @@ function AnalysisChatView({
                 <View
                   style={[
                     styles.progressBarFill,
-                    { width: `${progressPercent(generateProgress)}%` },
+                    {
+                      width: `${progressPercent(generateProgress ?? null)}%`,
+                    },
                   ]}
                 />
               </View>
             )}
-            {!generating && (
+            {!generating && onRetake && (
               <Pressable onPress={onRetake} style={styles.linkButton}>
                 <Text style={styles.linkText}>Re-record</Text>
               </Pressable>
