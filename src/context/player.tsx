@@ -76,16 +76,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     loopRef.current = loopSingle;
   }, [loopSingle]);
 
-  // Audio session: silent-mode play is essential; background play is
-  // best-effort because it depends on UIBackgroundModes being set in
-  // app.json + a native rebuild — split so the second can fail without
-  // killing the first.
+  // Audio session: silent-mode play only. shouldPlayInBackground was
+  // disabled here because, on a dev build without UIBackgroundModes
+  // baked in, the native call appears to mutate the AVAudioSession
+  // category before rejecting — which leaves playback "playing" but
+  // silent. We'll reintroduce background play after confirming the
+  // basic path works (and after `expo run:ios` has been rerun so the
+  // Info.plist actually has UIBackgroundModes=["audio"]).
   useEffect(() => {
     setAudioModeAsync({
       allowsRecording: false,
       playsInSilentMode: true,
     }).catch(() => {});
-    setAudioModeAsync({ shouldPlayInBackground: true }).catch(() => {});
   }, []);
 
   // Stable callback identities — the AudioEngine effects depend on
