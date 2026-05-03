@@ -1,7 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import {
+  useAudioPlayer,
+  useAudioPlayerStatus,
+} from 'expo-audio';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -10,12 +14,19 @@ import {
   Text,
   View,
 } from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
 import { listCardsDueBy, updateCard } from '../../../src/db/cards';
 import { incrementCardsReviewed } from '../../../src/db/stats';
 import { scheduleCard, type CardRating } from '../../../src/srs/fsrs';
-import { colors, radius, spacing, text } from '../../../src/theme';
+import { colors, radius, shadow, spacing, text } from '../../../src/theme';
 import type { Card as CardModel } from '../../../src/types';
 
 const RATINGS: {
@@ -34,6 +45,10 @@ export default function CardsScreen() {
   const [dueCards, setDueCards] = useState<CardModel[]>([]);
   const [reviewedToday, setReviewedToday] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [flipped, setFlipped] = useState(false);
+  const [playingExampleUri, setPlayingExampleUri] = useState<string | null>(
+    null
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -44,6 +59,8 @@ export default function CardsScreen() {
         if (!cancelled) {
           setDueCards(due);
           setReviewedToday(0);
+          setFlipped(false);
+          setPlayingExampleUri(null);
           setLoading(false);
         }
       })();
@@ -62,9 +79,10 @@ export default function CardsScreen() {
     const card = currentCard;
     if (!card) return;
 
-    // Advance UI immediately for snappiness; persist in background.
     setDueCards((prev) => prev.slice(1));
     setReviewedToday((n) => n + 1);
+    setFlipped(false);
+    setPlayingExampleUri(null);
 
     try {
       const update = scheduleCard(card, rating);
@@ -109,27 +127,46 @@ export default function CardsScreen() {
           <EmptyState reviewedToday={reviewedToday} />
         ) : (
           <>
-            <Flashcard card={currentCard} />
-            <View style={styles.ratingRow}>
-              {RATINGS.map((r) => (
-                <Pressable
-                  key={r.label}
-                  onPress={() => handleRate(r.rating)}
-                  style={({ pressed }) => [
-                    styles.ratingPill,
-                    { backgroundColor: r.bg },
-                    pressed && { opacity: 0.7 },
-                  ]}
-                >
-                  <Text style={[styles.ratingLabel, { color: r.fg }]}>
-                    {r.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            <Flashcard
+              key={currentCard.id}
+              card={currentCard}
+              flipped={flipped}
+              onFlip={() => setFlipped((f) => !f)}
+              playingUri={playingExampleUri}
+              onPlayExample={(uri) => setPlayingExampleUri(uri)}
+            />
+            {flipped ? (
+              <View style={styles.ratingRow}>
+                {RATINGS.map((r) => (
+                  <Pressable
+                    key={r.label}
+                    onPress={() => handleRate(r.rating)}
+                    style={({ pressed }) => [
+                      styles.ratingPill,
+                      { backgroundColor: r.bg },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={[styles.ratingLabel, { color: r.fg }]}>
+                      {r.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.flipHint}>Tap the card to see usage</Text>
+            )}
           </>
         )}
       </ScrollView>
+
+      {playingExampleUri && (
+        <ExamplePlayerEngine
+          key={playingExampleUri}
+          uri={playingExampleUri}
+          onFinished={() => setPlayingExampleUri(null)}
+        />
+      )}
     </Screen>
   );
 }
@@ -160,7 +197,71 @@ function EmptyState({ reviewedToday }: { reviewedToday: number }) {
   );
 }
 
-function Flashcard({ card }: { card: CardModel }) {
+interface FlashcardProps {
+  card: CardModel;
+  flipped: boolean;
+  onFlip: () => void;
+  playingUri: string | null;
+  onPlayExample: (uri: string) => void;
+}
+
+function Flashcard({
+  card,
+  flipped,
+  onFlip,
+  playingUri,
+  onPlayExample,
+}: FlashcardProps) {
+  const rotation = useSharedValue(0);
+
+  useEffect(() => {
+    rotation.value = withTiming(flipped ? 180 : 0, { duration: 420 });
+  }, [flipped, rotation]);
+
+  const frontStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: 1000 },
+      { rotateY: `${rotation.value}deg` },
+    ],
+    opacity: interpolate(
+      rotation.value,
+      [0, 89, 90, 180],
+      [1, 1, 0, 0],
+      Extrapolation.CLAMP
+    ),
+  }));
+
+  const backStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: 1000 },
+      { rotateY: `${rotation.value - 180}deg` },
+    ],
+    opacity: interpolate(
+      rotation.value,
+      [0, 90, 91, 180],
+      [0, 0, 1, 1],
+      Extrapolation.CLAMP
+    ),
+  }));
+
+  return (
+    <Pressable onPress={onFlip} style={styles.flipContainer}>
+      <Animated.View style={[styles.flipFace, frontStyle]} pointerEvents="none">
+        <CardFront card={card} />
+      </Animated.View>
+      <Animated.View style={[styles.flipFace, styles.flipBackPos, backStyle]}>
+        <CardBack
+          card={card}
+          playingUri={playingUri}
+          onPlayExample={onPlayExample}
+          interactive={flipped}
+        />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+function CardFront({ card }: { card: CardModel }) {
   const date = new Date(card.created_at).toLocaleDateString();
   return (
     <Card style={styles.flashcard}>
@@ -174,6 +275,93 @@ function Flashcard({ card }: { card: CardModel }) {
       </View>
     </Card>
   );
+}
+
+function CardBack({
+  card,
+  playingUri,
+  onPlayExample,
+  interactive,
+}: {
+  card: CardModel;
+  playingUri: string | null;
+  onPlayExample: (uri: string) => void;
+  interactive: boolean;
+}) {
+  return (
+    <Card style={styles.flashcardBack}>
+      <View style={styles.backHeader}>
+        <Text style={styles.backChunk}>{card.chunk}</Text>
+      </View>
+
+      {card.usage_note ? (
+        <View style={styles.backSection}>
+          <Text style={styles.backSectionLabel}>Usage</Text>
+          <Text style={styles.backUsageText}>{card.usage_note}</Text>
+        </View>
+      ) : null}
+
+      {card.examples.length > 0 && (
+        <View style={styles.backSection}>
+          <Text style={styles.backSectionLabel}>Examples</Text>
+          {card.examples.map((ex, i) => {
+            const isThisPlaying =
+              !!ex.audio_uri && playingUri === ex.audio_uri;
+            return (
+              <View key={i} style={styles.exampleRow}>
+                <Text style={styles.exampleText}>{ex.text}</Text>
+                {ex.audio_uri ? (
+                  <Pressable
+                    onPress={() => {
+                      if (interactive) onPlayExample(ex.audio_uri);
+                    }}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.examplePlayBtn,
+                      pressed && interactive && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Ionicons
+                      name={isThisPlaying ? 'volume-high' : 'play'}
+                      size={14}
+                      color={colors.textPrimary}
+                    />
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </Card>
+  );
+}
+
+function ExamplePlayerEngine({
+  uri,
+  onFinished,
+}: {
+  uri: string;
+  onFinished: () => void;
+}) {
+  const player = useAudioPlayer(uri);
+  const status = useAudioPlayerStatus(player);
+
+  useEffect(() => {
+    if (status.isLoaded) {
+      try {
+        player.play();
+      } catch {
+        /* swallow */
+      }
+    }
+  }, [status.isLoaded, player]);
+
+  useEffect(() => {
+    if (status.didJustFinish) onFinished();
+  }, [status.didJustFinish, onFinished]);
+
+  return null;
 }
 
 const styles = StyleSheet.create({
@@ -225,8 +413,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 19,
   },
+  flipContainer: {
+    minHeight: 320,
+  },
+  flipFace: {
+    width: '100%',
+  },
+  flipBackPos: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
   flashcard: {
-    minHeight: 280,
+    minHeight: 320,
     paddingVertical: spacing.xxl,
     paddingHorizontal: spacing.lg,
     justifyContent: 'space-between',
@@ -253,6 +453,57 @@ const styles = StyleSheet.create({
   },
   cardMeta: {
     ...text.caption,
+  },
+  flashcardBack: {
+    minHeight: 320,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+  },
+  backHeader: {
+    paddingBottom: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+  },
+  backChunk: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.accentText,
+  },
+  backSection: {
+    gap: 6,
+  },
+  backSectionLabel: {
+    ...text.micro,
+  },
+  backUsageText: {
+    ...text.body,
+  },
+  exampleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    paddingVertical: 6,
+  },
+  exampleText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.textPrimary,
+  },
+  examplePlayBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.accentBgSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow,
+  },
+  flipHint: {
+    ...text.caption,
+    color: colors.textTertiary,
+    textAlign: 'center',
   },
   ratingRow: {
     flexDirection: 'row',
