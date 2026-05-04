@@ -1,7 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
 import { useAuth } from '../../../src/context/auth';
@@ -12,7 +23,7 @@ import {
   getStatsRange,
   getTotalListeningSeconds,
 } from '../../../src/db/stats';
-import { colors, spacing, text } from '../../../src/theme';
+import { colors, radius, shadow, spacing, text } from '../../../src/theme';
 
 const HEATMAP_WEEKS = 16;
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
@@ -45,7 +56,39 @@ const ZERO_STATS: HomeStats = {
 export default function HomeScreen() {
   const [stats, setStats] = useState<HomeStats>(ZERO_STATS);
   const greeting = currentGreeting();
-  const { user, logout, deleteAccount } = useAuth();
+  const { user, logout, deleteAccount, updateProfile } = useAuth();
+  const [editingNickname, setEditingNickname] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState('');
+  const [nicknameSaving, setNicknameSaving] = useState(false);
+
+  const openNicknameEditor = () => {
+    setNicknameDraft(user?.nickname ?? '');
+    setEditingNickname(true);
+  };
+
+  const saveNickname = async () => {
+    const trimmed = nicknameDraft.trim();
+    if (!trimmed) {
+      return Alert.alert('提示', '昵称不能为空');
+    }
+    if (trimmed.length > 50) {
+      return Alert.alert('提示', '昵称最多 50 个字符');
+    }
+    if (trimmed === user?.nickname) {
+      setEditingNickname(false);
+      return;
+    }
+    setNicknameSaving(true);
+    try {
+      await updateProfile({ nickname: trimmed });
+      setEditingNickname(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '请稍后重试';
+      Alert.alert('保存失败', msg);
+    } finally {
+      setNicknameSaving(false);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert('退出登录', '确定要退出当前账号吗？', [
@@ -115,6 +158,24 @@ export default function HomeScreen() {
           <Text style={styles.greeting}>{greeting}</Text>
         </View>
 
+        {user && (
+          <Pressable
+            onPress={openNicknameEditor}
+            style={({ pressed }) => [
+              styles.nicknameCard,
+              pressed && { opacity: 0.7 },
+            ]}
+            hitSlop={6}
+          >
+            <Text style={styles.nicknameText}>{user.nickname}</Text>
+            <Ionicons
+              name="pencil-outline"
+              size={16}
+              color={colors.textTertiary}
+            />
+          </Pressable>
+        )}
+
         <Card style={styles.streakCard}>
           <Text style={styles.sectionLabel}>Current streak</Text>
           <View style={styles.streakNumberRow}>
@@ -182,12 +243,6 @@ export default function HomeScreen() {
 
         <Card style={styles.accountCard}>
           <Text style={styles.sectionLabel}>Account</Text>
-          {user && (
-            <Text style={styles.accountWho}>
-              {user.nickname}
-              {user.phone ? ` · ${user.phone}` : ''}
-            </Text>
-          )}
           <Pressable
             style={({ pressed }) => [
               styles.accountRow,
@@ -226,6 +281,66 @@ export default function HomeScreen() {
           </Pressable>
         </Card>
       </ScrollView>
+
+      <Modal
+        visible={editingNickname}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !nicknameSaving && setEditingNickname(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => !nicknameSaving && setEditingNickname(false)}
+          />
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>修改昵称</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={nicknameDraft}
+              onChangeText={setNicknameDraft}
+              maxLength={50}
+              autoFocus
+              placeholder="新昵称"
+              placeholderTextColor={colors.textTertiary}
+              returnKeyType="done"
+              onSubmitEditing={saveNickname}
+            />
+            <View style={styles.modalRow}>
+              <Pressable
+                onPress={() => setEditingNickname(false)}
+                disabled={nicknameSaving}
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnGhost,
+                  pressed && !nicknameSaving && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={styles.modalBtnGhostText}>取消</Text>
+              </Pressable>
+              <Pressable
+                onPress={saveNickname}
+                disabled={nicknameSaving || nicknameDraft.trim().length === 0}
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  (nicknameSaving || nicknameDraft.trim().length === 0) && {
+                    opacity: 0.5,
+                  },
+                  pressed && !nicknameSaving && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={styles.modalBtnPrimaryText}>
+                  {nicknameSaving ? '保存中…' : '保存'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </Screen>
   );
 }
@@ -500,14 +615,24 @@ const styles = StyleSheet.create({
     ...text.caption,
     lineHeight: 19,
   },
+  nicknameCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.card,
+    borderRadius: radius.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.lg,
+    ...shadow,
+  },
+  nicknameText: {
+    ...text.body,
+    fontWeight: '600',
+  },
   accountCard: {
     marginTop: spacing.md,
     padding: spacing.lg,
-  },
-  accountWho: {
-    ...text.body,
-    marginTop: 4,
-    marginBottom: spacing.md,
   },
   accountRow: {
     flexDirection: 'row',
@@ -523,5 +648,62 @@ const styles = StyleSheet.create({
   accountRowText: {
     ...text.body,
     fontWeight: '500',
+  },
+
+  // ── Nickname edit modal ────────────────────────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  modalSheet: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: colors.card,
+    borderRadius: radius.card,
+    padding: spacing.xl,
+    gap: spacing.md,
+    ...shadow,
+  },
+  modalTitle: {
+    ...text.cardTitle,
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  modalInput: {
+    ...text.body,
+    backgroundColor: colors.bg,
+    borderRadius: radius.inner,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  modalBtn: {
+    flex: 1,
+    borderRadius: radius.pill,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalBtnGhost: {
+    backgroundColor: colors.pillBg,
+  },
+  modalBtnGhostText: {
+    ...text.body,
+    fontWeight: '600',
+  },
+  modalBtnPrimary: {
+    backgroundColor: colors.textPrimary,
+  },
+  modalBtnPrimaryText: {
+    ...text.body,
+    color: colors.card,
+    fontWeight: '700',
   },
 });

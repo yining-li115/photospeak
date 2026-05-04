@@ -254,6 +254,32 @@ export function createAuthRouter(config: Config) {
     return c.json({ user: sanitizeUser(user) });
   });
 
+  // ─── PATCH /auth/me ───────────────────────────────────────────────
+  // Currently only nickname is editable. Add other fields (avatar, etc.)
+  // to the allowlist below as the UI grows.
+  app.patch('/me', requireUser(), async (c) => {
+    let body: { nickname?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const nickname =
+      typeof body.nickname === 'string' ? body.nickname.trim() : undefined;
+    if (nickname === undefined || nickname.length === 0 || nickname.length > 50) {
+      return c.json({ error: '昵称需在 1-50 字符之间' }, 400);
+    }
+    const [user] = await db
+      .update(schema.users)
+      .set({ nickname, updatedAt: new Date() })
+      .where(eq(schema.users.id, c.get('userId')))
+      .returning();
+    if (!user || user.deletedAt) {
+      return c.json({ error: 'user not found' }, 404);
+    }
+    return c.json({ user: sanitizeUser(user) });
+  });
+
   // ─── DELETE /auth/me ──────────────────────────────────────────────
   // Soft delete: set deleted_at + revoke ALL refresh tokens. The
   // account is recoverable for 7 days (a separate cron job hard-

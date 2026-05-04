@@ -42,6 +42,8 @@ interface AuthState {
   logout: () => Promise<void>;
   /** Soft-delete the account server-side, then locally log out. */
   deleteAccount: () => Promise<void>;
+  /** Patch profile fields server-side and update the cached user. */
+  updateProfile: (patch: { nickname?: string }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -118,6 +120,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const updateProfile = useCallback(
+    async (patch: { nickname?: string }) => {
+      const { user } = await authApi.updateProfile(patch);
+      setUser(user);
+    },
+    []
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -127,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginWithPhone,
         logout,
         deleteAccount,
+        updateProfile,
       }}
     >
       {children}

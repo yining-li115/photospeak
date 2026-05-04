@@ -58,5 +58,10 @@ export const authApi = {
    *  tokens via the AuthProvider). */
   deleteAccount: (): Promise<{ message: string }> =>
     backendRequest('DELETE', '/auth/me'),
+
+  /** Update mutable profile fields. Today only nickname; the backend's
+   *  /auth/me PATCH allowlist will grow as we add more. */
+  updateProfile: (patch: { nickname?: string }): Promise<{ user: AuthUser }> =>
+    backendRequest('PATCH', '/auth/me', patch),
 };
 
