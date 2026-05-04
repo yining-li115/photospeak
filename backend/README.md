@@ -112,6 +112,16 @@ apt update
 apt install -y nginx certbot python3-certbot-nginx
 ```
 
+> **大陆机房 GFW 兜底**：`raw.githubusercontent.com` 在国内服务器上经常被掐。如果上面 `curl ... nvm` 那步卡住，改用 Gitee 镜像 + npmmirror：
+>
+> ```bash
+> curl -o- https://gitee.com/mirrors/nvm/raw/v0.40.1/install.sh | bash
+> source ~/.bashrc
+> export NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node
+> nvm install 20
+> nvm use 20
+> ```
+
 ### 4. Upload the backend code
 
 Easiest: `git clone` the whole PhotoSpeak repo and `cd backend`.
@@ -124,19 +134,24 @@ npm install
 npm run build         # → dist/index.js
 ```
 
-### 5. Set production secrets in the host environment
+### 5. Create the production .env
 
 ```bash
-nano ~/.bashrc
-# Append:
-export PHOTOSPEAK_MIMO_API_KEY="..."
-export PHOTOSPEAK_DASHSCOPE_API_KEY="..."
-export PHOTOSPEAK_APP_SHARED_TOKEN="$(openssl rand -hex 32)"
-# Save the APP_SHARED_TOKEN value somewhere — you'll paste it into
-# the mobile .env later.
-
-source ~/.bashrc
+cd /opt/photospeak/backend       # or /root/photospeak/backend if you cloned to /root
+cp .env.example .env
+nano .env
 ```
+
+Fill in the three values. For `APP_SHARED_TOKEN`, generate a long random
+string and **save the value somewhere** — you'll paste it into the mobile
+`.env` later.
+
+```bash
+openssl rand -hex 32   # use the output as APP_SHARED_TOKEN
+```
+
+`.env` is gitignored, so it stays on this server only. The app loads it via
+`import 'dotenv/config'` at startup.
 
 ### 6. Start under PM2
 
