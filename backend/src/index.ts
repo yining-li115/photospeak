@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { createAuthRouter } from './routes/auth.js';
+import { requireAuth, type AuthVars } from './auth/middleware.js';
 
 const MIMO_BASE = 'https://api.xiaomimimo.com/v1';
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
@@ -9,53 +11,63 @@ const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
 interface Env {
   MIMO_API_KEY: string;
   DASHSCOPE_API_KEY: string;
-  /** Shared secret the mobile app sends in Authorization. Generate
-   *  a long random string and put it in both .env and the mobile
-   *  app's .env (EXPO_PUBLIC_API_TOKEN). Until we add real per-user
-   *  auth this is just a "you-are-the-app" check. */
-  APP_SHARED_TOKEN: string;
+  /** Legacy shared bearer (will be removed once every shipped mobile
+   *  build authenticates with a real JWT). Optional now — set this
+   *  while older builds are still in users' hands. */
+  APP_SHARED_TOKEN?: string;
+  /** iOS bundle identifier — used as the `aud` claim when verifying
+   *  Apple identity tokens. Must match `ios.bundleIdentifier` in
+   *  app.json. */
+  APPLE_BUNDLE_ID: string;
+  PHONE_LOGIN_ENABLED: boolean;
 }
 
 function readEnv(): Env {
   const e = process.env;
-  const required = ['MIMO_API_KEY', 'DASHSCOPE_API_KEY', 'APP_SHARED_TOKEN'];
-  for (const k of required) {
-    if (!e[k]) {
-      throw new Error(`Missing required env var: ${k}`);
-    }
+  for (const k of [
+    'MIMO_API_KEY',
+    'DASHSCOPE_API_KEY',
+    'APPLE_BUNDLE_ID',
+    'JWT_SECRET',
+    'DATABASE_URL',
+  ]) {
+    if (!e[k]) throw new Error(`Missing required env var: ${k}`);
   }
   return {
     MIMO_API_KEY: e.MIMO_API_KEY!,
     DASHSCOPE_API_KEY: e.DASHSCOPE_API_KEY!,
-    APP_SHARED_TOKEN: e.APP_SHARED_TOKEN!,
+    APP_SHARED_TOKEN: e.APP_SHARED_TOKEN || undefined,
+    APPLE_BUNDLE_ID: e.APPLE_BUNDLE_ID!,
+    PHONE_LOGIN_ENABLED: e.PHONE_LOGIN_ENABLED === 'true',
   };
 }
 
 const env = readEnv();
-const app = new Hono();
+const app = new Hono<{ Variables: AuthVars }>();
 
 app.use('*', cors());
 
-// Public liveness checks — no auth, useful for load balancer / monitor.
+// Public liveness checks.
 app.get('/', (c) => c.text('PhotoSpeak API · ok'));
 app.get('/health', (c) =>
   c.json({ status: 'ok', deployedAt: new Date().toISOString() })
 );
 
-// /api/* requires Bearer token equal to APP_SHARED_TOKEN.
-app.use('/api/*', async (c, next) => {
-  const auth = c.req.header('authorization') ?? '';
-  if (auth !== `Bearer ${env.APP_SHARED_TOKEN}`) {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
-  await next();
-});
+// /auth/* — public (login flows don't need auth themselves; logout/me
+// have their own requireUser middleware).
+app.route(
+  '/auth',
+  createAuthRouter({
+    appleBundleId: env.APPLE_BUNDLE_ID,
+    phoneLoginEnabled: env.PHONE_LOGIN_ENABLED,
+  })
+);
 
-/**
- * STT — Aliyun DashScope qwen3-asr-flash.
- * Mobile app builds the body (model/input.messages with audio data
- * URI/asr_options); we just inject the upstream key.
- */
+// /api/* — proxied calls to MiMo / DashScope. Accepts either a
+// per-user JWT or the legacy APP_SHARED_TOKEN bearer (until every
+// shipped mobile build has been replaced).
+app.use('/api/*', requireAuth(env.APP_SHARED_TOKEN));
+
 app.post('/api/transcribe', async (c) => {
   const body = await c.req.text();
   const upstream = await fetch(
@@ -72,11 +84,6 @@ app.post('/api/transcribe', async (c) => {
   return passthrough(upstream);
 });
 
-/**
- * Image+text analysis OR follow-up chat — MiMo chat completions.
- * Mobile sends the full chat-completions body (model: mimo-v2.5,
- * messages with image_url + text, etc).
- */
 app.post('/api/analyze', async (c) => {
   const body = await c.req.text();
   const upstream = await fetch(`${MIMO_BASE}/chat/completions`, {
@@ -90,11 +97,6 @@ app.post('/api/analyze', async (c) => {
   return passthrough(upstream);
 });
 
-/**
- * TTS — same MiMo chat-completions endpoint with the TTS model
- * (mimo-v2.5-tts) and an `audio` field. Response carries base64
- * audio in choices[0].message.audio.data; we just relay JSON.
- */
 app.post('/api/tts', async (c) => {
   const body = await c.req.text();
   const upstream = await fetch(`${MIMO_BASE}/chat/completions`, {

@@ -3,20 +3,32 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Node.js (Hono) proxy that fronts MiMo / Aliyun DashScope so API keys never ship inside the mobile binary.",
+  "description": "Node.js (Hono) backend for PhotoSpeak: API key proxy + user auth (Apple + phone) + JWT sessions.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
+    "@alicloud/dypnsapi20170525": "^2.0.0",
+    "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/tea-util": "^1.4.11",
     "@hono/node-server": "^1.13.0",
     "dotenv": "^16.4.0",
-    "hono": "^4.6.0"
+    "drizzle-orm": "^0.36.0",
+    "hono": "^4.6.0",
+    "jose": "^5.9.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   },
