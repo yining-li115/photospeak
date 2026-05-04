@@ -156,25 +156,25 @@ export default function HomeScreen() {
 
         <View style={styles.greetingRow}>
           <Text style={styles.greeting}>{greeting}</Text>
+          {user && (
+            <Pressable
+              onPress={openNicknameEditor}
+              style={({ pressed }) => [
+                styles.namePress,
+                pressed && { opacity: 0.6 },
+              ]}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 8 }}
+            >
+              <Text style={styles.greetingComma}>,</Text>
+              <Text style={styles.greetingName}>{user.nickname}</Text>
+              <Ionicons
+                name="pencil-outline"
+                size={14}
+                color={colors.accent}
+              />
+            </Pressable>
+          )}
         </View>
-
-        {user && (
-          <Pressable
-            onPress={openNicknameEditor}
-            style={({ pressed }) => [
-              styles.nicknameCard,
-              pressed && { opacity: 0.7 },
-            ]}
-            hitSlop={6}
-          >
-            <Text style={styles.nicknameText}>{user.nickname}</Text>
-            <Ionicons
-              name="pencil-outline"
-              size={16}
-              color={colors.textTertiary}
-            />
-          </Pressable>
-        )}
 
         <Card style={styles.streakCard}>
           <Text style={styles.sectionLabel}>Current streak</Text>
@@ -506,10 +506,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     marginBottom: spacing.sm,
   },
   greeting: {
     ...text.greeting,
+  },
+  namePress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 0,
+  },
+  greetingComma: {
+    ...text.greeting,
+  },
+  greetingName: {
+    ...text.greeting,
+    color: colors.accent,
   },
   sectionLabel: {
     ...text.micro,
@@ -614,21 +630,6 @@ const styles = StyleSheet.create({
   tipBody: {
     ...text.caption,
     lineHeight: 19,
-  },
-  nicknameCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.lg,
-    ...shadow,
-  },
-  nicknameText: {
-    ...text.body,
-    fontWeight: '600',
   },
   accountCard: {
     marginTop: spacing.md,
