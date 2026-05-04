@@ -1,5 +1,5 @@
 import { File } from 'expo-file-system';
-import { backendHeaders, requireBackendConfig } from './backend';
+import { backendRequest } from './backend';
 
 const MODEL = 'qwen3-asr-flash';
 
@@ -17,8 +17,6 @@ export async function transcribeAudioWithAliyun(
   recordingUri: string,
   options: { language?: string } = {}
 ): Promise<string> {
-  const { base, token } = requireBackendConfig();
-
   const base64 = await new File(recordingUri).base64();
   const dataUri = `data:${mimeTypeFromUri(recordingUri)};base64,${base64}`;
 
@@ -43,21 +41,19 @@ export async function transcribeAudioWithAliyun(
     },
   };
 
-  const response = await fetch(`${base}/api/transcribe`, {
-    method: 'POST',
-    headers: backendHeaders(token),
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const text = await safeReadText(response);
+  let json: DashScopeAsrResponse;
+  try {
+    json = await backendRequest<DashScopeAsrResponse>(
+      'POST',
+      '/api/transcribe',
+      body
+    );
+  } catch (e) {
     throw new AliyunAsrError(
-      `DashScope ASR failed (${response.status}): ${text}`,
-      response.status
+      e instanceof Error ? e.message : `DashScope ASR failed: ${String(e)}`
     );
   }
 
-  const json = (await response.json()) as DashScopeAsrResponse;
   const text = extractTranscript(json);
   // null = unparseable response (real bug); '' = model produced no text
   // (usually an empty/too-short recording — let the UI handle it).
@@ -124,13 +120,5 @@ function mimeTypeFromUri(uri: string): string {
       return 'audio/flac';
     default:
       return 'audio/mp4';
-  }
-}
-
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return '<no body>';
   }
 }

@@ -254,6 +254,26 @@ export function createAuthRouter(config: Config) {
     return c.json({ user: sanitizeUser(user) });
   });
 
+  // ─── DELETE /auth/me ──────────────────────────────────────────────
+  // Soft delete: set deleted_at + revoke ALL refresh tokens. The
+  // account is recoverable for 7 days (a separate cron job hard-
+  // deletes after that). Re-logging in via Apple/phone within the
+  // window reactivates the account (clears deleted_at) — see
+  // /auth/apple's reactivation branch.
+  app.delete('/me', requireUser(), async (c) => {
+    const userId = c.get('userId');
+    const now = new Date();
+    await db
+      .update(schema.users)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(eq(schema.users.id, userId));
+    await db
+      .update(schema.refreshTokens)
+      .set({ revoked: true })
+      .where(eq(schema.refreshTokens.userId, userId));
+    return c.json({ message: '账号已注销，7 天内重新登录可恢复' });
+  });
+
   return app;
 }
 

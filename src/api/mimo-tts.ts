@@ -1,4 +1,4 @@
-import { backendHeaders, requireBackendConfig } from './backend';
+import { backendRequest } from './backend';
 
 const MODEL = 'mimo-v2.5-tts';
 
@@ -34,8 +34,6 @@ export class MimoTtsError extends Error {
 export async function synthesizeSpeech(
   options: SynthesizeOptions
 ): Promise<SynthesizeResult> {
-  const { base, token } = requireBackendConfig();
-
   const voice = options.voice ?? DEFAULT_VOICE;
   const format = options.format ?? DEFAULT_FORMAT;
 
@@ -52,21 +50,15 @@ export async function synthesizeSpeech(
     audio: { format, voice },
   };
 
-  const response = await fetch(`${base}/api/tts`, {
-    method: 'POST',
-    headers: backendHeaders(token),
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errBody = await safeReadText(response);
+  let json: MimoTtsResponse;
+  try {
+    json = await backendRequest<MimoTtsResponse>('POST', '/api/tts', body);
+  } catch (e) {
     throw new MimoTtsError(
-      `MiMo TTS failed (${response.status}): ${errBody}`,
-      response.status
+      e instanceof Error ? e.message : `MiMo TTS failed: ${String(e)}`
     );
   }
 
-  const json = (await response.json()) as MimoTtsResponse;
   const audio = json?.choices?.[0]?.message?.audio;
   if (!audio?.data || typeof audio.data !== 'string') {
     throw new MimoTtsError(
@@ -82,12 +74,4 @@ interface MimoTtsResponse {
       audio?: { data?: string; transcript?: string };
     };
   }>;
-}
-
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return '<no body>';
-  }
 }

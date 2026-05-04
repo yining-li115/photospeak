@@ -1,6 +1,6 @@
 import { File } from 'expo-file-system';
 import type { ChatMessage, Chunk, CorrectedSentence } from '../types';
-import { backendHeaders, requireBackendConfig } from './backend';
+import { backendRequest } from './backend';
 
 const MODEL = 'mimo-v2.5';
 
@@ -83,8 +83,6 @@ export class MimoError extends Error {
 }
 
 export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResult> {
-  const { base, token } = requireBackendConfig();
-
   const base64 = await new File(input.photoUri).base64();
   const dataUri = `data:image/jpeg;base64,${base64}`;
 
@@ -113,21 +111,15 @@ export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResul
     temperature: 0.4,
   };
 
-  const response = await fetch(`${base}/api/analyze`, {
-    method: 'POST',
-    headers: backendHeaders(token),
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errBody = await safeReadText(response);
+  let json: MimoChatResponse;
+  try {
+    json = await backendRequest<MimoChatResponse>('POST', '/api/analyze', body);
+  } catch (e) {
     throw new MimoError(
-      `MiMo request failed (${response.status}): ${errBody}`,
-      response.status
+      e instanceof Error ? e.message : `MiMo request failed: ${String(e)}`
     );
   }
 
-  const json = (await response.json()) as MimoChatResponse;
   const content = json?.choices?.[0]?.message?.content;
   if (!content || typeof content !== 'string') {
     throw new MimoError(
@@ -183,14 +175,6 @@ function isAnalysisShape(v: unknown): v is AnalysisResult {
   );
 }
 
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return '<no body>';
-  }
-}
-
 export interface FollowUpInput {
   /** Local file:// URI of the same photo used for the original analysis. */
   photoUri: string;
@@ -205,8 +189,6 @@ export interface FollowUpInput {
 }
 
 export async function followUpChat(input: FollowUpInput): Promise<string> {
-  const { base, token } = requireBackendConfig();
-
   const base64 = await new File(input.photoUri).base64();
   const dataUri = `data:image/jpeg;base64,${base64}`;
 
@@ -234,21 +216,15 @@ export async function followUpChat(input: FollowUpInput): Promise<string> {
     temperature: 0.5,
   };
 
-  const response = await fetch(`${base}/api/analyze`, {
-    method: 'POST',
-    headers: backendHeaders(token),
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errBody = await safeReadText(response);
+  let json: MimoChatResponse;
+  try {
+    json = await backendRequest<MimoChatResponse>('POST', '/api/analyze', body);
+  } catch (e) {
     throw new MimoError(
-      `MiMo follow-up failed (${response.status}): ${errBody}`,
-      response.status
+      e instanceof Error ? e.message : `MiMo follow-up failed: ${String(e)}`
     );
   }
 
-  const json = (await response.json()) as MimoChatResponse;
   const content = json?.choices?.[0]?.message?.content;
   if (!content || typeof content !== 'string') {
     throw new MimoError(

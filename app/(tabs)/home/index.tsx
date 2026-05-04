@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
+import { useAuth } from '../../../src/context/auth';
 import { countMasteredCards, listCardsDueBy } from '../../../src/db/cards';
 import {
   getCurrentStreak,
@@ -44,6 +45,47 @@ const ZERO_STATS: HomeStats = {
 export default function HomeScreen() {
   const [stats, setStats] = useState<HomeStats>(ZERO_STATS);
   const greeting = currentGreeting();
+  const { user, logout, deleteAccount } = useAuth();
+
+  const handleLogout = () => {
+    Alert.alert('退出登录', '确定要退出当前账号吗？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '退出',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await logout();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : '请稍后重试';
+            Alert.alert('退出失败', msg);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      '注销账号',
+      '注销后账号进入 7 天冷静期，期间重新登录可恢复。冷静期后所有数据将被永久删除。',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '确认注销',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : '请稍后重试';
+              Alert.alert('注销失败', msg);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -137,6 +179,52 @@ export default function HomeScreen() {
             </View>
           </Card>
         )}
+
+        <Card style={styles.accountCard}>
+          <Text style={styles.sectionLabel}>Account</Text>
+          {user && (
+            <Text style={styles.accountWho}>
+              {user.nickname}
+              {user.phone ? ` · ${user.phone}` : ''}
+            </Text>
+          )}
+          <Pressable
+            style={({ pressed }) => [
+              styles.accountRow,
+              pressed && { opacity: 0.6 },
+            ]}
+            onPress={handleLogout}
+          >
+            <Ionicons
+              name="log-out-outline"
+              size={18}
+              color={colors.textPrimary}
+            />
+            <Text style={styles.accountRowText}>退出登录</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.accountRow,
+              styles.accountRowLast,
+              pressed && { opacity: 0.6 },
+            ]}
+            onPress={handleDeleteAccount}
+          >
+            <Ionicons
+              name="trash-outline"
+              size={18}
+              color={colors.rating.againText}
+            />
+            <Text
+              style={[
+                styles.accountRowText,
+                { color: colors.rating.againText },
+              ]}
+            >
+              注销账号
+            </Text>
+          </Pressable>
+        </Card>
       </ScrollView>
     </Screen>
   );
@@ -411,5 +499,29 @@ const styles = StyleSheet.create({
   tipBody: {
     ...text.caption,
     lineHeight: 19,
+  },
+  accountCard: {
+    marginTop: spacing.md,
+    padding: spacing.lg,
+  },
+  accountWho: {
+    ...text.body,
+    marginTop: 4,
+    marginBottom: spacing.md,
+  },
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+  },
+  accountRowLast: {
+    borderBottomWidth: 0,
+  },
+  accountRowText: {
+    ...text.body,
+    fontWeight: '500',
   },
 });
