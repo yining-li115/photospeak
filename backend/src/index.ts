@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createAuthRouter } from './routes/auth.js';
 import { requireAuth, type AuthVars } from './auth/middleware.js';
+import { privacyHtml } from './legal.js';
 
 const MIMO_BASE = 'https://api.xiaomimimo.com/v1';
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
@@ -52,6 +53,14 @@ app.get('/', (c) => c.text('PhotoSpeak API · ok'));
 app.get('/health', (c) =>
   c.json({ status: 'ok', deployedAt: new Date().toISOString() })
 );
+
+// Public legal page — App Store Connect submission requires a real,
+// reachable URL for the privacy policy. /privacy and /terms both
+// resolve to the same combined doc for now (terms section is part of
+// the privacy page); split them into separate handlers if Apple's
+// review ever asks for it.
+app.get('/privacy', (c) => c.html(privacyHtml()));
+app.get('/terms', (c) => c.html(privacyHtml()));
 
 // /auth/* — public (login flows don't need auth themselves; logout/me
 // have their own requireUser middleware).
