@@ -3,16 +3,25 @@
  * generation, 5-minute expiry, 60s same-number throttle, one-shot
  * consumption — is owned by Aliyun. We never store codes ourselves.
  */
-import Dypnsapi, {
+import DypnsapiPkg, {
   CheckSmsVerifyCodeRequest,
   SendSmsVerifyCodeRequest,
 } from '@alicloud/dypnsapi20170525';
 import { Config } from '@alicloud/openapi-client';
 import { RuntimeOptions } from '@alicloud/tea-util';
 
-let cachedClient: Dypnsapi | null = null;
+// CJS-from-ESM interop: the dypnsapi package's default export is the
+// client class, but Node's ESM-importing-CJS flow gives us the
+// `module.exports` namespace object instead (with the class on
+// `.default`). TypeScript's types lie about this, so unwrap manually.
+type DypnsapiClient = InstanceType<typeof DypnsapiPkg>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const DypnsapiCtor: typeof DypnsapiPkg =
+  (DypnsapiPkg as any)?.default ?? DypnsapiPkg;
 
-function getClient(): Dypnsapi {
+let cachedClient: DypnsapiClient | null = null;
+
+function getClient(): DypnsapiClient {
   if (cachedClient) return cachedClient;
   const id = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
   const secret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
@@ -23,7 +32,7 @@ function getClient(): Dypnsapi {
   }
   const config = new Config({ accessKeyId: id, accessKeySecret: secret });
   config.endpoint = 'dypnsapi.aliyuncs.com';
-  cachedClient = new Dypnsapi(config);
+  cachedClient = new DypnsapiCtor(config);
   return cachedClient;
 }
 

@@ -89,7 +89,7 @@ export default function WelcomeScreen() {
           centered around 60% screen height (matches familycourt). */}
       <View style={s.brandArea}>
         <Image
-          source={require('../../assets/images/icon.png')}
+          source={require('../../assets/images/welcome-logo.png')}
           style={s.logo}
           contentFit="contain"
         />
