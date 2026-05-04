@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,8 +13,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { useHeaderHeight } from '@react-navigation/elements';
 import {
   analyzeSession,
   followUpChat,
@@ -168,13 +171,14 @@ export default function SessionDetailScreen() {
     }
   };
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = async (mode: 'polish' | 'expand') => {
     if (!photo || !transcript) return;
     setAnalyzing(true);
     try {
       const result = await analyzeSession({
         photoUri: photo.photo_thumbnail_uri,
         transcript,
+        mode,
       });
       setAnalysis(result);
     } catch (e) {
@@ -377,56 +381,69 @@ function PreAnalysisView({
   onToggleRecord: () => void;
   onTranscribe: () => void;
   onTranscriptChange: (text: string) => void;
-  onAnalyze: () => void;
+  onAnalyze: (mode: 'polish' | 'expand') => void;
   onRetakeRecording: () => void;
 }) {
+  const headerHeight = useHeaderHeight();
   return (
-    <View style={styles.preContainer}>
-      <PhotoArea photo={photo} />
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.preRoot}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <ScrollView
+          contentContainerStyle={styles.preContainer}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
+          <PhotoArea photo={photo} />
 
-      <View style={styles.pickerRow}>
-        <Pill
-          label="Random"
-          onPress={() => onPick('random')}
-          variant="filter"
-          active={false}
-        />
-        <Pill
-          label="Choose"
-          onPress={() => onPick('choose')}
-          variant="filter"
-          active={false}
-        />
-      </View>
+          <View style={styles.pickerRow}>
+            <Pill
+              label="Random"
+              onPress={() => onPick('random')}
+              variant="filter"
+              active={false}
+            />
+            <Pill
+              label="Choose"
+              onPress={() => onPick('choose')}
+              variant="filter"
+              active={false}
+            />
+          </View>
 
-      {photo && (
-        <View style={styles.actionArea}>
-          {transcript ? (
-            <TranscriptStage
-              transcript={transcript}
-              onChange={onTranscriptChange}
-              onAnalyze={onAnalyze}
-              onRetake={onRetakeRecording}
-            />
-          ) : transcribing ? (
-            <BusyStage label="Transcribing…" />
-          ) : recording ? (
-            <RecordingDoneStage
-              durationMs={recording.durationMs}
-              onTranscribe={onTranscribe}
-              onRetake={onRetakeRecording}
-            />
-          ) : (
-            <RecordStage
-              recording={recorderActive}
-              durationMs={recorderDurationMs}
-              busy={savingRecording || picking}
-              onToggle={onToggleRecord}
-            />
+          {photo && (
+            <View style={styles.actionArea}>
+              {transcript ? (
+                <TranscriptStage
+                  transcript={transcript}
+                  onChange={onTranscriptChange}
+                  onAnalyze={onAnalyze}
+                  onRetake={onRetakeRecording}
+                />
+              ) : transcribing ? (
+                <BusyStage label="Transcribing…" />
+              ) : recording ? (
+                <RecordingDoneStage
+                  durationMs={recording.durationMs}
+                  onTranscribe={onTranscribe}
+                  onRetake={onRetakeRecording}
+                />
+              ) : (
+                <RecordStage
+                  recording={recorderActive}
+                  durationMs={recorderDurationMs}
+                  busy={savingRecording || picking}
+                  onToggle={onToggleRecord}
+                />
+              )}
+            </View>
           )}
-        </View>
-      )}
-    </View>
+        </ScrollView>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -527,9 +544,10 @@ function TranscriptStage({
 }: {
   transcript: string;
   onChange: (text: string) => void;
-  onAnalyze: () => void;
+  onAnalyze: (mode: 'polish' | 'expand') => void;
   onRetake: () => void;
 }) {
+  const empty = transcript.trim().length === 0;
   return (
     <View style={styles.actionStack}>
       <View style={styles.transcriptHeader}>
@@ -549,11 +567,19 @@ function TranscriptStage({
         />
       </Card>
       <PrimaryButton
-        label="Analyze"
-        icon="sparkles-outline"
-        onPress={onAnalyze}
+        label="Polish my words"
+        icon="create-outline"
+        onPress={() => onAnalyze('polish')}
         fullWidth
-        disabled={transcript.trim().length === 0}
+        disabled={empty}
+      />
+      <PrimaryButton
+        label="Help me say more"
+        icon="sparkles-outline"
+        variant="ghost"
+        onPress={() => onAnalyze('expand')}
+        fullWidth
+        disabled={empty}
       />
       <Pressable onPress={onRetake} style={styles.linkButton}>
         <Text style={styles.linkText}>Re-record</Text>
@@ -598,6 +624,7 @@ function AnalysisChatView({
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const [draft, setDraft] = useState('');
+  const headerHeight = useHeaderHeight();
 
   useEffect(() => {
     const t = setTimeout(
@@ -618,13 +645,14 @@ function AnalysisChatView({
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.chatRoot}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
     >
       <ScrollView
         ref={scrollRef}
         style={styles.chatScroll}
         contentContainerStyle={styles.chatScrollInner}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       >
         <Image
           source={{ uri: `${photo.photo_uri}?v=${photo.version}` }}
@@ -868,8 +896,11 @@ const styles = StyleSheet.create({
     ...text.caption,
   },
 
-  preContainer: {
+  preRoot: {
     flex: 1,
+  },
+  preContainer: {
+    flexGrow: 1,
     padding: spacing.lg,
     gap: spacing.md,
   },

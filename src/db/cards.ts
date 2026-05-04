@@ -1,3 +1,7 @@
+import {
+  resolveStoragePath,
+  toRelativeStoragePath,
+} from '../storage/resolve';
 import type { Card, ChunkExample, ReviewRecord } from '../types';
 import { getDB, parseJsonArray, stringifyJson } from './schema';
 
@@ -25,7 +29,7 @@ function rowToCard(row: CardRow): Card {
     chunk: row.chunk,
     usage_note: row.usage_note,
     examples: parseJsonArray<ChunkExample>(row.examples),
-    photo_thumbnail_uri: row.photo_thumbnail_uri,
+    photo_thumbnail_uri: resolveStoragePath(row.photo_thumbnail_uri),
     source_session_id: row.source_session_id,
     created_at: row.created_at,
     next_review_at: row.next_review_at,
@@ -49,7 +53,7 @@ export async function createCard(c: Card): Promise<void> {
       c.chunk,
       c.usage_note,
       stringifyJson(c.examples),
-      c.photo_thumbnail_uri,
+      toRelativeStoragePath(c.photo_thumbnail_uri),
       c.source_session_id,
       c.created_at,
       c.next_review_at,
@@ -147,7 +151,7 @@ export async function updateCard(
   }
   if (patch.photo_thumbnail_uri !== undefined) {
     sets.push('photo_thumbnail_uri = ?');
-    values.push(patch.photo_thumbnail_uri);
+    values.push(toRelativeStoragePath(patch.photo_thumbnail_uri));
   }
   if (patch.source_session_id !== undefined) {
     sets.push('source_session_id = ?');

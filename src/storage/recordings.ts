@@ -24,6 +24,9 @@ export function persistRecording(sourceUri: string, sessionId: string): string {
   const dest = new File(dir, `${sessionId}${ext}`);
   if (dest.exists) dest.delete();
   src.move(dest);
+  // Returns absolute file:// URI so callers can read the file via
+  // `new File(...)`. SQLite persists it via the DB layer, which strips
+  // the docDirectory prefix so the path survives reinstalls.
   return dest.uri;
 }
 

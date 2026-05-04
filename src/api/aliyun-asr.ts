@@ -1,7 +1,6 @@
 import { File } from 'expo-file-system';
+import { backendHeaders, requireBackendConfig } from './backend';
 
-const ENDPOINT =
-  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 const MODEL = 'qwen3-asr-flash';
 
 export class AliyunAsrError extends Error {
@@ -18,12 +17,7 @@ export async function transcribeAudioWithAliyun(
   recordingUri: string,
   options: { language?: string } = {}
 ): Promise<string> {
-  const apiKey = process.env.EXPO_PUBLIC_DASHSCOPE_API_KEY;
-  if (!apiKey) {
-    throw new AliyunAsrError(
-      'EXPO_PUBLIC_DASHSCOPE_API_KEY is not set. Add it to your .env file.'
-    );
-  }
+  const { base, token } = requireBackendConfig();
 
   const base64 = await new File(recordingUri).base64();
   const dataUri = `data:${mimeTypeFromUri(recordingUri)};base64,${base64}`;
@@ -49,12 +43,9 @@ export async function transcribeAudioWithAliyun(
     },
   };
 
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(`${base}/api/transcribe`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers: backendHeaders(token),
     body: JSON.stringify(body),
   });
 

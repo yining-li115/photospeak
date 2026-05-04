@@ -47,3 +47,13 @@ app-example
 # generated native folders
 /ios
 /android
+
+# scratch / reference files (screenshots, PDFs, chat-generated images)
+截屏*.png
+截图*.png
+ChatGPT Image*.png
+ChatGPT Image*.jpg
+*.pdf
+logo_ps.png
+mimo.pdf
+

@@ -20,6 +20,10 @@ export function saveAudioFromBase64(
   if (file.exists) file.delete();
   file.create();
   file.write(base64, { encoding: 'base64' });
+  // Returns an absolute file:// URI so callers can pass it straight to
+  // expo-audio / new File(...). SQLite persists it via the DB layer,
+  // which strips the docDirectory prefix to a relative path so the
+  // value survives sandbox UUID changes across reinstalls.
   return file.uri;
 }
 

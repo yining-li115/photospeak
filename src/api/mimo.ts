@@ -1,10 +1,18 @@
 import { File } from 'expo-file-system';
 import type { ChatMessage, Chunk, CorrectedSentence } from '../types';
+import { backendHeaders, requireBackendConfig } from './backend';
 
-const ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions';
 const MODEL = 'mimo-v2.5';
 
-const SYSTEM_PROMPT = `You are an English language coach. The user is a native Chinese speaker learning English. Analyze their spoken English description of a photo. Your job is to help user improve.
+const POLISH_INSTRUCTION = `Stay faithful to what the user actually said. The polished version should preserve their meaning, length, and structure — fix grammar, word choice, and phrasing, but do NOT add new ideas, observations, or details that weren't in their transcript.`;
+
+const EXPAND_INSTRUCTION = `Treat the user's transcript as the opening of a longer description. Build a natural ~60-second spoken monologue (roughly 8-12 sentences) that starts from what they said and continues by describing the photo more fully — what's in it, the mood, small details worth noticing. The polished version should sound like a fluent speaker thinking aloud, not a written paragraph. Pull "corrected_sentences" only from what the user actually said (do not invent corrections for sentences they didn't speak).`;
+
+function buildSystemPrompt(mode: AnalyzeMode): string {
+  const modeInstruction = mode === 'expand' ? EXPAND_INSTRUCTION : POLISH_INSTRUCTION;
+  return `You are an English language coach. The user is a native Chinese speaker learning English. Analyze their spoken English description of a photo. Your job is to help user improve.
+
+${modeInstruction}
 
 Return ONLY valid JSON with this exact structure:
 {
@@ -38,6 +46,7 @@ Return ONLY valid JSON with this exact structure:
 Select 3-5 chunks. Choose phrases with high transfer value — ones the user can reuse in many contexts.
 If the user's transcript is already perfect, return an empty corrected_sentences array.
 Do not return any text outside the JSON object. Do not wrap the JSON in markdown code fences.`;
+}
 
 const FOLLOWUP_SYSTEM_PROMPT = `You are an English language coach. The user is a native Chinese speaker learning English. You have just analyzed their spoken description of a photo and given them corrections, a polished version, and reusable phrases.
 
@@ -49,11 +58,18 @@ export interface AnalysisResult {
   chunks: Chunk[];
 }
 
+export type AnalyzeMode = 'polish' | 'expand';
+
 export interface AnalyzeInput {
   /** Local file:// URI of the photo (use the 200x200 thumbnail to save tokens). */
   photoUri: string;
   /** Whisper transcript of the user's recording. */
   transcript: string;
+  /**
+   * 'polish' (default): faithful rewrite of what the user said.
+   * 'expand': treat the user's words as the opening of a longer ~60s monologue.
+   */
+  mode?: AnalyzeMode;
 }
 
 export class MimoError extends Error {
@@ -67,12 +83,7 @@ export class MimoError extends Error {
 }
 
 export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResult> {
-  const apiKey = process.env.EXPO_PUBLIC_MIMO_API_KEY;
-  if (!apiKey) {
-    throw new MimoError(
-      'EXPO_PUBLIC_MIMO_API_KEY is not set. Add it to your .env file.'
-    );
-  }
+  const { base, token } = requireBackendConfig();
 
   const base64 = await new File(input.photoUri).base64();
   const dataUri = `data:image/jpeg;base64,${base64}`;
@@ -82,7 +93,7 @@ export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResul
     messages: [
       {
         role: 'system',
-        content: SYSTEM_PROMPT,
+        content: buildSystemPrompt(input.mode ?? 'polish'),
       },
       {
         role: 'user',
@@ -102,12 +113,9 @@ export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResul
     temperature: 0.4,
   };
 
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(`${base}/api/analyze`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': apiKey,
-    },
+    headers: backendHeaders(token),
     body: JSON.stringify(body),
   });
 
@@ -197,12 +205,7 @@ export interface FollowUpInput {
 }
 
 export async function followUpChat(input: FollowUpInput): Promise<string> {
-  const apiKey = process.env.EXPO_PUBLIC_MIMO_API_KEY;
-  if (!apiKey) {
-    throw new MimoError(
-      'EXPO_PUBLIC_MIMO_API_KEY is not set. Add it to your .env file.'
-    );
-  }
+  const { base, token } = requireBackendConfig();
 
   const base64 = await new File(input.photoUri).base64();
   const dataUri = `data:image/jpeg;base64,${base64}`;
@@ -231,12 +234,9 @@ export async function followUpChat(input: FollowUpInput): Promise<string> {
     temperature: 0.5,
   };
 
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(`${base}/api/analyze`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': apiKey,
-    },
+    headers: backendHeaders(token),
     body: JSON.stringify(body),
   });
 

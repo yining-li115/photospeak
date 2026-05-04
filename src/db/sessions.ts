@@ -1,3 +1,7 @@
+import {
+  resolveStoragePath,
+  toRelativeStoragePath,
+} from '../storage/resolve';
 import type {
   ChatMessage,
   Chunk,
@@ -31,18 +35,23 @@ interface SessionRow {
 }
 
 function rowToSession(row: SessionRow): Session {
+  // Storage paths are persisted relative to documentDirectory; resolve
+  // them to absolute file:// URIs here so the rest of the app can pass
+  // them straight to <Image>, expo-audio, etc.
   return {
     id: row.id,
     created_at: row.created_at,
-    photo_uri: row.photo_uri,
-    photo_thumbnail_uri: row.photo_thumbnail_uri,
-    recording_uri: row.recording_uri,
+    photo_uri: resolveStoragePath(row.photo_uri),
+    photo_thumbnail_uri: resolveStoragePath(row.photo_thumbnail_uri),
+    recording_uri: resolveStoragePath(row.recording_uri),
     transcript: row.transcript ?? '',
     corrected_sentences: parseJsonArray<CorrectedSentence>(
       row.corrected_sentences
     ),
     polished_sentences: parseJsonArray<string>(row.polished_sentences),
-    sentence_audio_uris: parseJsonArray<string>(row.sentence_audio_uris),
+    sentence_audio_uris: parseJsonArray<string>(row.sentence_audio_uris).map(
+      resolveStoragePath
+    ),
     chunks: parseJsonArray<Chunk>(row.chunks),
     chat_history: parseJsonArray<ChatMessage>(row.chat_history),
     podcast_generated: boolFromInt(row.podcast_generated),
@@ -61,13 +70,16 @@ export async function createSession(s: Session): Promise<void> {
     [
       s.id,
       s.created_at,
-      s.photo_uri,
-      s.photo_thumbnail_uri,
-      s.recording_uri,
+      // Idempotent: storage layer already returns relative paths, but
+      // a UI caller round-tripping a resolved URI would otherwise reach
+      // here as absolute. Strip docRoot so SQLite always holds relative.
+      toRelativeStoragePath(s.photo_uri),
+      toRelativeStoragePath(s.photo_thumbnail_uri),
+      toRelativeStoragePath(s.recording_uri),
       s.transcript,
       stringifyJson(s.corrected_sentences),
       stringifyJson(s.polished_sentences),
-      stringifyJson(s.sentence_audio_uris),
+      stringifyJson(s.sentence_audio_uris.map(toRelativeStoragePath)),
       stringifyJson(s.chunks),
       stringifyJson(s.chat_history),
       intFromBool(s.podcast_generated),
@@ -114,15 +126,15 @@ export async function updateSession(
   }
   if (patch.photo_uri !== undefined) {
     sets.push('photo_uri = ?');
-    values.push(patch.photo_uri);
+    values.push(toRelativeStoragePath(patch.photo_uri));
   }
   if (patch.photo_thumbnail_uri !== undefined) {
     sets.push('photo_thumbnail_uri = ?');
-    values.push(patch.photo_thumbnail_uri);
+    values.push(toRelativeStoragePath(patch.photo_thumbnail_uri));
   }
   if (patch.recording_uri !== undefined) {
     sets.push('recording_uri = ?');
-    values.push(patch.recording_uri);
+    values.push(toRelativeStoragePath(patch.recording_uri));
   }
   if (patch.transcript !== undefined) {
     sets.push('transcript = ?');
@@ -138,7 +150,9 @@ export async function updateSession(
   }
   if (patch.sentence_audio_uris !== undefined) {
     sets.push('sentence_audio_uris = ?');
-    values.push(stringifyJson(patch.sentence_audio_uris));
+    values.push(
+      stringifyJson(patch.sentence_audio_uris.map(toRelativeStoragePath))
+    );
   }
   if (patch.chunks !== undefined) {
     sets.push('chunks = ?');

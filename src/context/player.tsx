@@ -127,8 +127,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (loopRef.current) return; // single-loop is handled by player.loop
     const next = indexRef.current + 1;
     if (next < queueRef.current.length) {
-      setCurrentIndex(next);
-      setAutoplayWanted(true);
+      // Defer the source swap by one tick. Without this, expo-audio's
+      // teardown of the just-finished native player races with the new
+      // player's initialization on iOS, and the new player gets stuck
+      // at isLoaded=false (next sentence never starts).
+      setTimeout(() => {
+        setCurrentIndex(next);
+        setAutoplayWanted(true);
+      }, 120);
     } else {
       // End of queue. Park the flag so togglePlay can restart cleanly.
       finishedRef.current = true;

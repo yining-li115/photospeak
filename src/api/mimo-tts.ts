@@ -1,4 +1,5 @@
-const ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions';
+import { backendHeaders, requireBackendConfig } from './backend';
+
 const MODEL = 'mimo-v2.5-tts';
 
 export const DEFAULT_VOICE = 'Chloe';
@@ -33,12 +34,7 @@ export class MimoTtsError extends Error {
 export async function synthesizeSpeech(
   options: SynthesizeOptions
 ): Promise<SynthesizeResult> {
-  const apiKey = process.env.EXPO_PUBLIC_MIMO_API_KEY;
-  if (!apiKey) {
-    throw new MimoTtsError(
-      'EXPO_PUBLIC_MIMO_API_KEY is not set. Add it to your .env file.'
-    );
-  }
+  const { base, token } = requireBackendConfig();
 
   const voice = options.voice ?? DEFAULT_VOICE;
   const format = options.format ?? DEFAULT_FORMAT;
@@ -56,12 +52,9 @@ export async function synthesizeSpeech(
     audio: { format, voice },
   };
 
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(`${base}/api/tts`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': apiKey,
-    },
+    headers: backendHeaders(token),
     body: JSON.stringify(body),
   });
 

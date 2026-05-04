@@ -45,6 +45,10 @@ export async function savePhoto(
   if (thumbDest.exists) thumbDest.delete();
   new File(thumbResult.uri).move(thumbDest);
 
+  // Returns absolute file:// URIs so the UI can pass them straight to
+  // <Image>. SQLite persists them via the DB layer, which strips the
+  // docDirectory prefix to a relative path so the value survives
+  // sandbox UUID changes across reinstalls.
   return {
     photo_uri: fullDest.uri,
     photo_thumbnail_uri: thumbDest.uri,
