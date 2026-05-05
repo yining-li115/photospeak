@@ -165,7 +165,6 @@ export default function HomeScreen() {
               ]}
               hitSlop={{ top: 6, bottom: 6, left: 4, right: 8 }}
             >
-              <Text style={styles.greetingComma}>,</Text>
               <Text style={styles.greetingName}>{user.nickname}</Text>
               <Ionicons
                 name="pencil-outline"
@@ -518,10 +517,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginLeft: 0,
-  },
-  greetingComma: {
-    ...text.greeting,
+    marginLeft: 8,
   },
   greetingName: {
     ...text.greeting,
