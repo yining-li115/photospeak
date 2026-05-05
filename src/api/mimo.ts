@@ -4,7 +4,7 @@ import { backendRequest } from './backend';
 
 const MODEL = 'mimo-v2.5';
 
-const POLISH_INSTRUCTION = `Stay faithful to what the user actually said. The polished version should preserve their meaning, length, and structure — fix grammar, word choice, and phrasing, but do NOT add new ideas, observations, or details that weren't in their transcript.`;
+const POLISH_INSTRUCTION = `Rewrite the user's transcript as a native English speaker would say it in casual conversation. Fix grammar, word choice, and phrasing to sound natural — but keep the user's meaning, length, and sentence structure. Do not add new ideas, details, or observations that weren't in their transcript.`;
 
 const EXPAND_INSTRUCTION = `Treat the user's transcript as the opening of a longer description. Build a natural ~60-second spoken monologue (roughly 8-12 sentences) that starts from what they said and continues by describing the photo more fully — what's in it, the mood, small details worth noticing. The polished version should sound like a fluent speaker thinking aloud, not a written paragraph. Pull "corrected_sentences" only from what the user actually said (do not invent corrections for sentences they didn't speak).`;
 
@@ -43,7 +43,15 @@ Return ONLY valid JSON with this exact structure:
   ]
 }
 
-Select 3-5 chunks. Choose phrases with high transfer value — ones the user can reuse in many contexts.
+For chunks: pick 3-5 useful multi-word phrases (≥ 2 words) drawn from the polished version. Prefer phrases that:
+- Don't translate word-for-word from 中文 — so they're worth learning for a Chinese speaker
+- Are reusable across topics — no proper nouns, no this-photo-only content
+
+For each chunk:
+- "chunk": the exact phrase as a fluent speaker would say it (include the article/preposition if it's part of the idiom, e.g. "a knack for")
+- "usage_note": a 1-2 sentence Chinese note on when fluent speakers use this and why, vs the simpler default a Chinese learner would default to
+- "examples": EXACTLY 2 example sentences in CONTEXTS DIFFERENT from this photo. Do not just reword the polished sentences.
+
 If the user's transcript is already perfect, return an empty corrected_sentences array.
 Do not return any text outside the JSON object. Do not wrap the JSON in markdown code fences.`;
 }

@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -50,7 +51,6 @@ interface SavedRecording {
 }
 
 export default function SessionDetailScreen() {
-  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [mode, setMode] = useState<Mode>('loading');
   const [existingSession, setExistingSession] = useState<Session | null>(null);
@@ -67,6 +67,11 @@ export default function SessionDetailScreen() {
   const [generating, setGenerating] = useState(false);
   const [generateProgress, setGenerateProgress] =
     useState<GenerateProgress | null>(null);
+  // True briefly right after Save & Generate succeeds so the
+  // AnalysisChatView shows a "Saved" hint above the chat composer.
+  const [showSavedHint, setShowSavedHint] = useState(false);
+  // Help modal (the ? icon in the header).
+  const [helpVisible, setHelpVisible] = useState(false);
 
   const recorder = useRecorder();
 
@@ -235,7 +240,7 @@ export default function SessionDetailScreen() {
     setGenerating(true);
     setGenerateProgress(null);
     try {
-      const result = await generateSession({
+      await generateSession({
         sessionId: id,
         photoUri: photo.photo_uri,
         photoThumbnailUri: photo.photo_thumbnail_uri,
@@ -245,18 +250,12 @@ export default function SessionDetailScreen() {
         chatHistory: chatMessages,
         onProgress: setGenerateProgress,
       });
-      Alert.alert(
-        'Done',
-        `Added to Listening · ${result.cardCount} card${
-          result.cardCount === 1 ? '' : 's'
-        } created`,
-        [
-          {
-            text: 'OK',
-            onPress: () => router.replace('/listening'),
-          },
-        ]
-      );
+      // Stay on the page. Transition to 'existing' mode so the
+      // AnalysisChatView re-renders without the Save button and with
+      // the chat composer enabled. Show the saved-hint banner so the
+      // user knows what just happened.
+      setMode('existing');
+      setShowSavedHint(true);
     } catch (e) {
       Alert.alert(
         'Generation failed',
@@ -281,7 +280,25 @@ export default function SessionDetailScreen() {
         options={{
           title: mode === 'new' ? 'New session' : 'Session',
           headerBackTitle: 'Sessions',
+          headerRight: () => (
+            <Pressable
+              onPress={() => setHelpVisible(true)}
+              hitSlop={10}
+              style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+            >
+              <Ionicons
+                name="help-circle-outline"
+                size={24}
+                color={colors.textSecondary}
+              />
+            </Pressable>
+          ),
         }}
+      />
+
+      <SessionHelpModal
+        visible={helpVisible}
+        onClose={() => setHelpVisible(false)}
       />
 
       {mode === 'loading' && (
@@ -298,6 +315,7 @@ export default function SessionDetailScreen() {
           chatMessages={chatMessages}
           chatPending={chatPending}
           analyzing={false}
+          showSavedHint={showSavedHint}
           onSendChat={handleSendChat}
         />
       )}
@@ -608,6 +626,7 @@ function AnalysisChatView({
   analyzing,
   generating = false,
   generateProgress = null,
+  showSavedHint = false,
   onSendChat,
   onConfirm,
   onRetake,
@@ -620,6 +639,10 @@ function AnalysisChatView({
   analyzing: boolean;
   generating?: boolean;
   generateProgress?: GenerateProgress | null;
+  /** True briefly right after Save & Generate succeeds — shows the
+   *  "Saved. Ask follow-up questions… chat won't change saved
+   *  content" hint banner above the chat composer. */
+  showSavedHint?: boolean;
   onSendChat: (text: string) => void;
   onConfirm?: () => void;
   onRetake?: () => void;
@@ -627,6 +650,11 @@ function AnalysisChatView({
   const scrollRef = useRef<ScrollView>(null);
   const [draft, setDraft] = useState('');
   const headerHeight = useHeaderHeight();
+  // Pre-generation: only show Save & Generate button, no chat composer
+  // (chat is meant for clarification questions about the saved
+  // content, which doesn't exist yet). Post-generation: chat composer
+  // appears, Save button is gone.
+  const isPreGen = !!onConfirm;
 
   useEffect(() => {
     const t = setTimeout(
@@ -697,7 +725,7 @@ function AnalysisChatView({
               label={
                 generating
                   ? formatGenerateProgress(generateProgress ?? null)
-                  : 'Confirm & Generate'
+                  : 'Save & Generate'
               }
               icon={generating ? undefined : 'sparkles-outline'}
               fullWidth
@@ -726,33 +754,50 @@ function AnalysisChatView({
         )}
       </ScrollView>
 
-      <View style={styles.composer}>
-        <TextInput
-          style={styles.composerInput}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Ask a follow-up…"
-          placeholderTextColor={colors.textTertiary}
-          editable={!!analysis && !chatPending}
-          multiline
-          returnKeyType="send"
-          onSubmitEditing={submit}
-          blurOnSubmit
-        />
-        <Pressable
-          onPress={submit}
-          disabled={!analysis || chatPending || draft.trim().length === 0}
-          style={({ pressed }) => [
-            styles.composerSend,
-            (!analysis || chatPending || draft.trim().length === 0) && {
-              opacity: 0.4,
-            },
-            pressed && { opacity: 0.7 },
-          ]}
-        >
-          <Ionicons name="arrow-up" size={18} color={colors.textPrimary} />
-        </Pressable>
-      </View>
+      {!isPreGen && (
+        <>
+          {showSavedHint && (
+            <View style={styles.savedHintBanner}>
+              <Ionicons
+                name="checkmark-circle"
+                size={16}
+                color={colors.accentText}
+              />
+              <Text style={styles.savedHintText}>
+                Saved. Ask follow-up questions below — chat won't change
+                the saved podcast or cards.
+              </Text>
+            </View>
+          )}
+          <View style={styles.composer}>
+            <TextInput
+              style={styles.composerInput}
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Ask a follow-up…"
+              placeholderTextColor={colors.textTertiary}
+              editable={!!analysis && !chatPending}
+              multiline
+              returnKeyType="send"
+              onSubmitEditing={submit}
+              blurOnSubmit
+            />
+            <Pressable
+              onPress={submit}
+              disabled={!analysis || chatPending || draft.trim().length === 0}
+              style={({ pressed }) => [
+                styles.composerSend,
+                (!analysis || chatPending || draft.trim().length === 0) && {
+                  opacity: 0.4,
+                },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Ionicons name="arrow-up" size={18} color={colors.textPrimary} />
+            </Pressable>
+          </View>
+        </>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -834,6 +879,123 @@ function AnalysisBubble({ analysis }: { analysis: AnalysisResult }) {
         </View>
       )}
     </AssistantBubble>
+  );
+}
+
+function SessionHelpModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.helpOverlay}>
+        <View style={styles.helpSheet}>
+          <ScrollView
+            style={styles.helpScroll}
+            contentContainerStyle={styles.helpContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.helpTitle}>How PhotoSpeak Sessions Work</Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>1. </Text>
+              <Text style={styles.helpStepBold}>Record</Text> about a minute
+              describing the photo in English.
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>2. </Text>
+              <Text style={styles.helpStepBold}>Transcribe</Text> turns the
+              audio into text.
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>3. </Text>Choose{' '}
+              <Text style={styles.helpStepBold}>Polish my words</Text>{' '}
+              (faithful rewrite) or{' '}
+              <Text style={styles.helpStepBold}>Help me say more</Text> (AI
+              expands your words into a longer monologue).
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>4. </Text>Read the polished
+              version and the reusable phrases (chunks).
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>5. </Text>Tap{' '}
+              <Text style={styles.helpStepBold}>Save & Generate</Text> to
+              lock it in. Each polished sentence becomes audio (added to
+              your Listening library), and each chunk becomes a flashcard.
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>6. </Text>After saving, you
+              can ask follow-up questions in chat. The AI will explain in
+              Chinese, but the chat won't change the saved podcast or
+              cards — it's for understanding only.
+            </Text>
+            <Text style={styles.helpTip}>
+              Tip: if you don't like the polished result, just re-record
+              before saving.
+            </Text>
+
+            <View style={styles.helpDivider} />
+
+            <Text style={styles.helpTitle}>PhotoSpeak 会话流程</Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>1. </Text>
+              <Text style={styles.helpStepBold}>录音</Text>{' '}
+              约 1 分钟，用英语描述照片。
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>2. </Text>
+              <Text style={styles.helpStepBold}>转写</Text>{' '}
+              AI 把语音转成文字。
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>3. </Text>选{' '}
+              <Text style={styles.helpStepBold}>Polish my words</Text>{' '}
+              (忠实改写) 或{' '}
+              <Text style={styles.helpStepBold}>Help me say more</Text>{' '}
+              (基于你的开头扩展成更长段落)。
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>4. </Text>
+              阅读 polished 版本和可复用短语 (chunks)。
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>5. </Text>点{' '}
+              <Text style={styles.helpStepBold}>Save & Generate</Text>{' '}
+              定稿。每句 polished 生成 TTS 音频（进入听力库），每个 chunk
+              生成一张复习卡片。
+            </Text>
+            <Text style={styles.helpStep}>
+              <Text style={styles.helpStepNum}>6. </Text>
+              保存后可以在对话框追问任何疑问，AI 用中文解释。
+              <Text style={styles.helpStepBold}>
+                聊天不会修改已生成的播客和卡片
+              </Text>
+              ，仅供答疑。
+            </Text>
+            <Text style={styles.helpTip}>
+              提示：如果对 polished 结果不满意，保存前可以直接重新录音。
+            </Text>
+          </ScrollView>
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [
+              styles.helpCloseBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Text style={styles.helpCloseBtnText}>Got it</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1202,6 +1364,76 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: colors.accent,
     borderRadius: 2,
+  },
+  // ── Session help modal ─────────────────────────────────────────
+  helpOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  helpSheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
+    maxHeight: '85%',
+  },
+  helpScroll: { marginBottom: spacing.md },
+  helpContent: { paddingBottom: spacing.md },
+  helpTitle: {
+    ...text.cardTitle,
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: spacing.md,
+  },
+  helpStep: {
+    ...text.body,
+    fontSize: 14,
+    lineHeight: 22,
+    marginBottom: 10,
+  },
+  helpStepNum: { fontWeight: '700' },
+  helpStepBold: { fontWeight: '700' },
+  helpTip: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  helpDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.separator,
+    marginVertical: spacing.lg,
+  },
+  helpCloseBtn: {
+    backgroundColor: colors.textPrimary,
+    borderRadius: 24,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  helpCloseBtnText: {
+    color: colors.card,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+
+  savedHintBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    backgroundColor: colors.accentBgSoft,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.separator,
+  },
+  savedHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.accentText,
+    lineHeight: 16,
   },
   composer: {
     flexDirection: 'row',
