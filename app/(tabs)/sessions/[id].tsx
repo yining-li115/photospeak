@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useHeaderHeight } from '@react-navigation/elements';
+import Markdown from 'react-native-markdown-display';
 import {
   analyzeSession,
   followUpChat,
@@ -679,7 +680,7 @@ function AnalysisChatView({
             <UserBubble key={i} text={m.content} />
           ) : (
             <AssistantBubble key={i}>
-              <Text style={styles.bubbleText}>{m.content}</Text>
+              <Markdown style={markdownStyles}>{m.content}</Markdown>
             </AssistantBubble>
           )
         )}
@@ -881,6 +882,72 @@ function formatDuration(ms: number): string {
   const ss = (total % 60).toString().padStart(2, '0');
   return `${mm}:${ss}`;
 }
+
+// react-native-markdown-display takes a separate style object (not a
+// StyleSheet) keyed by element name. We tune it to match the chat
+// bubble's body text and only diverge for emphasis (bold / italic /
+// code / lists).
+const markdownStyles = {
+  body: { ...text.body, color: colors.textPrimary },
+  paragraph: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
+  strong: { fontWeight: '700' as const },
+  em: { fontStyle: 'italic' as const },
+  // Headings: scale modestly — chat doesn't want huge h1s.
+  heading1: {
+    fontSize: 17,
+    fontWeight: '700' as const,
+    color: colors.textPrimary,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  heading2: {
+    fontSize: 16,
+    fontWeight: '700' as const,
+    color: colors.textPrimary,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  heading3: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    color: colors.textPrimary,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { marginBottom: 4 },
+  code_inline: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13,
+    backgroundColor: colors.pillBg,
+    paddingHorizontal: 4,
+    borderRadius: 4,
+  },
+  fence: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13,
+    backgroundColor: colors.pillBg,
+    padding: 8,
+    borderRadius: 6,
+    marginVertical: 4,
+  },
+  blockquote: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.separator,
+    paddingLeft: 10,
+    marginVertical: 4,
+  },
+  link: { color: colors.accentText, textDecorationLine: 'underline' as const },
+  hr: {
+    backgroundColor: colors.separator,
+    height: 1,
+    marginVertical: 8,
+  },
+};
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
