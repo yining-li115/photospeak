@@ -107,7 +107,12 @@ export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResul
         ],
       },
     ],
-    max_completion_tokens: 4096,
+    // MiMo is a reasoning model — it spends 200-2000+ tokens on
+    // hidden reasoning before emitting the JSON, all counted against
+    // this budget. 4096 was getting truncated on multi-sentence
+    // transcripts; 12288 leaves comfortable headroom even for a
+    // 10-sentence "expand" mode response.
+    max_completion_tokens: 12288,
     temperature: 0.4,
   };
 
@@ -212,7 +217,10 @@ export async function followUpChat(input: FollowUpInput): Promise<string> {
   const body = {
     model: MODEL,
     messages,
-    max_completion_tokens: 1024,
+    // Same reasoning budget concern as analyzeSession (see note
+    // there). 4096 is enough for a chatty paragraph-length follow-up
+    // reply plus reasoning overhead.
+    max_completion_tokens: 4096,
     temperature: 0.5,
   };
 
