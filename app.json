@@ -77,7 +77,8 @@
           "microphonePermission": "PhotoSpeak needs your microphone so you can record yourself describing photos in English."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true,

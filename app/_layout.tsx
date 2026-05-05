@@ -1,72 +1,66 @@
-import { Stack, useRouter, useSegments } from 'expo-router';
+import * as Sentry from '@sentry/react-native';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { AuthProvider, useAuth } from '../src/context/auth';
 import { PlayerProvider } from '../src/context/player';
-import { colors } from '../src/theme';
 
-export default function RootLayout() {
+// Crash + error reporting. Only initializes when EXPO_PUBLIC_SENTRY_DSN
+// is set, so dev / pre-Sentry-account builds skip it cleanly. Init at
+// module load so it captures errors that happen during the very first
+// render (e.g. SecureStore native module failing to link).
+const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    environment: __DEV__ ? 'development' : 'production',
+    // Lower trace sampling in production — we mainly care about
+    // errors, not every span. Bump if you start using Sentry's
+    // performance dashboards.
+    tracesSampleRate: __DEV__ ? 1.0 : 0.2,
+  });
+}
+
+function RootLayout() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <AuthProvider>
-        <PlayerProvider>
-          <AuthGate>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="(auth)" />
-            </Stack>
-          </AuthGate>
-          <StatusBar style="auto" />
-        </PlayerProvider>
-      </AuthProvider>
-    </GestureHandlerRootView>
+    <ErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <AuthProvider>
+          <PlayerProvider>
+            <RootStack />
+            <StatusBar style="auto" />
+          </PlayerProvider>
+        </AuthProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
 
 /**
- * Watches auth state + current route segment and redirects whenever
- * there's a mismatch:
- *   - logged out user inside (tabs)  → push to (auth)/welcome
- *   - logged in  user inside (auth)  → push to (tabs)
+ * While AuthProvider is checking SecureStore on launch, return null —
+ * iOS keeps showing the native splash until we render something. This
+ * is more graceful than a spinner overlay (which would dismiss the
+ * splash immediately and leave the user staring at our spinner if
+ * the network is slow).
  *
- * While the AuthProvider is still checking SecureStore on app launch,
- * shows a centered spinner so we don't flash the welcome screen for
- * users who actually have a valid session.
+ * Auth gating itself is declarative, done per-group in the
+ * (auth)/_layout and (tabs)/_layout files via <Redirect>. There's no
+ * imperative router.replace inside a useEffect anymore, so there's no
+ * race window where a route mounts before the redirect fires.
  */
-function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (loading) return;
-    // Expo Router types haven't picked up `(auth)` yet — they
-    // regenerate on metro startup. Keep this string-typed.
-    const inAuthGroup = (segments[0] as string) === '(auth)';
-    if (!user && !inAuthGroup) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      router.replace('/(auth)/welcome' as any);
-    } else if (user && inAuthGroup) {
-      router.replace('/(tabs)/sessions');
-    }
-  }, [user, loading, segments, router]);
-
-  if (loading) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: colors.bg,
-        }}
-      >
-        <ActivityIndicator color={colors.textTertiary} />
-      </View>
-    );
-  }
-
-  return <>{children}</>;
+function RootStack() {
+  const { loading } = useAuth();
+  if (loading) return null;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(auth)" />
+    </Stack>
+  );
 }
+
+// Wrap the root in Sentry's ErrorBoundary HOC when initialized so
+// uncaught render errors flow up to the dashboard. Falls through
+// transparently in dev / no-DSN setups.
+export default SENTRY_DSN ? Sentry.wrap(RootLayout) : RootLayout;

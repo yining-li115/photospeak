@@ -54,19 +54,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Boot: do we have a stored token? If yes, hit /auth/me to confirm
   // it still works. If /me returns 401, backendRequest already wiped
-  // the tokens; we just stay logged out.
+  // the tokens; we stay logged out.
   //
-  // Watchdog: if SecureStore or /auth/me hangs (e.g. a TestFlight
-  // build with a wrong entitlement, or the backend domain unreachable
-  // from the user's network), force loading=false after 5s so the
-  // user lands on the welcome screen instead of staring at a spinner
-  // forever. They can still log in and use the app from there.
+  // No watchdog needed anymore — the root layout returns null while
+  // loading, so iOS keeps the splash up. If /auth/me hangs, the user
+  // sees a normal-looking splash, not a stuck spinner. The /me call
+  // itself has its own retry-on-401 inside backendRequest.
   useEffect(() => {
     let cancelled = false;
-    const watchdog = setTimeout(() => {
-      if (!cancelled) setLoading(false);
-    }, 5000);
-
     (async () => {
       try {
         const refresh = await getRefreshToken();
@@ -76,15 +71,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         if (!cancelled) setUser(null);
       } finally {
-        if (!cancelled) {
-          clearTimeout(watchdog);
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
-      clearTimeout(watchdog);
     };
   }, []);
 

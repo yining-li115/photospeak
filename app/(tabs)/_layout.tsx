@@ -1,11 +1,20 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 import { MiniPlayer } from '../../src/components/MiniPlayer';
+import { useAuth } from '../../src/context/auth';
 import { colors } from '../../src/theme';
 
 export default function TabsLayout() {
+  // Declarative auth gate: render Redirect at render time instead of
+  // pushing a route via useEffect. No imperative-redirect race window;
+  // if user is null, this group never even mounts its tab navigator.
+  const { user } = useAuth();
+  if (!user) {
+    return <Redirect href={'/(auth)/welcome' as never} />;
+  }
+
   return (
     <Tabs
       screenOptions={{
