@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,7 +12,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { useHeaderHeight } from '@react-navigation/elements';
@@ -391,58 +389,61 @@ function PreAnalysisView({
       style={styles.preRoot}
       keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <ScrollView
-          contentContainerStyle={styles.preContainer}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-        >
-          <PhotoArea photo={photo} />
+      <ScrollView
+        contentContainerStyle={styles.preContainer}
+        // 'always' so taps on cards / outside the input don't dismiss
+        // the keyboard — users need to scroll the page around while
+        // editing the transcript without losing the keyboard.
+        keyboardShouldPersistTaps="always"
+        // Drag-down inside the scroll view is the explicit "I want to
+        // dismiss" gesture (matches iOS Messages / Mail).
+        keyboardDismissMode="interactive"
+      >
+        <PhotoArea photo={photo} />
 
-          <View style={styles.pickerRow}>
-            <Pill
-              label="Random"
-              onPress={() => onPick('random')}
-              variant="filter"
-              active={false}
-            />
-            <Pill
-              label="Choose"
-              onPress={() => onPick('choose')}
-              variant="filter"
-              active={false}
-            />
+        <View style={styles.pickerRow}>
+          <Pill
+            label="Random"
+            onPress={() => onPick('random')}
+            variant="filter"
+            active={false}
+          />
+          <Pill
+            label="Choose"
+            onPress={() => onPick('choose')}
+            variant="filter"
+            active={false}
+          />
+        </View>
+
+        {photo && (
+          <View style={styles.actionArea}>
+            {transcript ? (
+              <TranscriptStage
+                transcript={transcript}
+                onChange={onTranscriptChange}
+                onAnalyze={onAnalyze}
+                onRetake={onRetakeRecording}
+              />
+            ) : transcribing ? (
+              <BusyStage label="Transcribing…" />
+            ) : recording ? (
+              <RecordingDoneStage
+                durationMs={recording.durationMs}
+                onTranscribe={onTranscribe}
+                onRetake={onRetakeRecording}
+              />
+            ) : (
+              <RecordStage
+                recording={recorderActive}
+                durationMs={recorderDurationMs}
+                busy={savingRecording || picking}
+                onToggle={onToggleRecord}
+              />
+            )}
           </View>
-
-          {photo && (
-            <View style={styles.actionArea}>
-              {transcript ? (
-                <TranscriptStage
-                  transcript={transcript}
-                  onChange={onTranscriptChange}
-                  onAnalyze={onAnalyze}
-                  onRetake={onRetakeRecording}
-                />
-              ) : transcribing ? (
-                <BusyStage label="Transcribing…" />
-              ) : recording ? (
-                <RecordingDoneStage
-                  durationMs={recording.durationMs}
-                  onTranscribe={onTranscribe}
-                  onRetake={onRetakeRecording}
-                />
-              ) : (
-                <RecordStage
-                  recording={recorderActive}
-                  durationMs={recorderDurationMs}
-                  busy={savingRecording || picking}
-                  onToggle={onToggleRecord}
-                />
-              )}
-            </View>
-          )}
-        </ScrollView>
-      </TouchableWithoutFeedback>
+        )}
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -651,7 +652,9 @@ function AnalysisChatView({
         ref={scrollRef}
         style={styles.chatScroll}
         contentContainerStyle={styles.chatScrollInner}
-        keyboardShouldPersistTaps="handled"
+        // 'always' so users can scroll while typing without losing
+        // the keyboard. Drag-down dismisses (interactive mode).
+        keyboardShouldPersistTaps="always"
         keyboardDismissMode="interactive"
       >
         <Image
