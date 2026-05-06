@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -15,7 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useHeaderHeight } from '@react-navigation/elements';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
 import {
   analyzeSession,
@@ -44,6 +44,14 @@ import { colors, radius, shadow, spacing, text } from '../../../src/theme';
 import type { ChatMessage, Session } from '../../../src/types';
 
 type Mode = 'loading' | 'new' | 'existing';
+
+// Self-rendered header height (excluding the status-bar safe area
+// inset, which is added separately). We render our own header so we
+// can opt out of iOS 26's "Liquid Glass" headerRight button chrome —
+// the white capsule it puts around custom buttons doesn't fit our
+// flat amber theme. Same pattern as the sessions / listening list
+// screens.
+const HEADER_BODY_HEIGHT = 44;
 
 interface SavedRecording {
   uri: string;
@@ -276,20 +284,11 @@ export default function SessionDetailScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: mode === 'new' ? 'New session' : 'Session',
-          headerBackTitle: 'Sessions',
-          headerRight: () => (
-            <Pressable
-              onPress={() => setHelpVisible(true)}
-              hitSlop={10}
-              style={({ pressed }) => [pressed && { opacity: 0.5 }]}
-            >
-              <Text style={styles.helpHeaderMark}>?</Text>
-            </Pressable>
-          ),
-        }}
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <SessionHeader
+        title={mode === 'new' ? 'New session' : 'Session'}
+        onHelp={() => setHelpVisible(true)}
       />
 
       <SessionHelpModal
@@ -397,7 +396,8 @@ function PreAnalysisView({
   onAnalyze: (mode: 'polish' | 'expand') => void;
   onRetakeRecording: () => void;
 }) {
-  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
+  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -645,7 +645,8 @@ function AnalysisChatView({
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const [draft, setDraft] = useState('');
-  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
+  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
   // Pre-generation: only show Save & Generate button, no chat composer
   // (chat is meant for clarification questions about the saved
   // content, which doesn't exist yet). Post-generation: chat composer
@@ -875,6 +876,61 @@ function AnalysisBubble({ analysis }: { analysis: AnalysisResult }) {
         </View>
       )}
     </AssistantBubble>
+  );
+}
+
+function SessionHeader({
+  title,
+  onHelp,
+}: {
+  title: string;
+  onHelp: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  return (
+    <View
+      style={[
+        styles.header,
+        { paddingTop: insets.top, height: insets.top + HEADER_BODY_HEIGHT },
+      ]}
+    >
+      <Pressable
+        onPress={() => router.back()}
+        hitSlop={10}
+        style={({ pressed }) => [
+          styles.headerSide,
+          pressed && { opacity: 0.5 },
+        ]}
+      >
+        <Ionicons
+          name="chevron-back"
+          size={24}
+          color={colors.textPrimary}
+        />
+        <Text style={styles.headerBackLabel}>Sessions</Text>
+      </Pressable>
+
+      <Text style={styles.headerTitle} numberOfLines={1}>
+        {title}
+      </Text>
+
+      <Pressable
+        onPress={onHelp}
+        hitSlop={10}
+        style={({ pressed }) => [
+          styles.headerSide,
+          styles.headerRight,
+          pressed && { opacity: 0.5 },
+        ]}
+      >
+        <Ionicons
+          name="help-circle-outline"
+          size={24}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+    </View>
   );
 }
 
@@ -1361,11 +1417,37 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderRadius: 2,
   },
-  helpHeaderMark: {
-    fontSize: 22,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    paddingHorizontal: 4,
+  // ── Self-rendered header (replaces native header to avoid iOS 26
+  //    Liquid Glass button chrome on the headerRight icon)
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.bg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+  },
+  headerSide: {
+    minWidth: 90,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  headerRight: {
+    justifyContent: 'flex-end',
+  },
+  headerBackLabel: {
+    fontSize: 17,
+    color: colors.textPrimary,
+    marginLeft: -2,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    textAlign: 'center',
   },
 
   // ── Session help modal ─────────────────────────────────────────
