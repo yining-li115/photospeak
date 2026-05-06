@@ -396,13 +396,14 @@ function PreAnalysisView({
   onAnalyze: (mode: 'polish' | 'expand') => void;
   onRetakeRecording: () => void;
 }) {
-  const insets = useSafeAreaInsets();
-  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.preRoot}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
+      // No offset needed — we render our own header (headerShown: false),
+      // so KAV's frame is measured against absolute screen coords and
+      // doesn't need to compensate for a navigator-rendered header.
+      keyboardVerticalOffset={0}
     >
       <ScrollView
         contentContainerStyle={styles.preContainer}
@@ -645,8 +646,6 @@ function AnalysisChatView({
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const [draft, setDraft] = useState('');
-  const insets = useSafeAreaInsets();
-  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
   // Pre-generation: only show Save & Generate button, no chat composer
   // (chat is meant for clarification questions about the saved
   // content, which doesn't exist yet). Post-generation: chat composer
@@ -672,7 +671,8 @@ function AnalysisChatView({
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.chatRoot}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
+      // No offset — see the matching comment in PreAnalysisView.
+      keyboardVerticalOffset={0}
     >
       <ScrollView
         ref={scrollRef}
