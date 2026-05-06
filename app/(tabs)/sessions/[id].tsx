@@ -284,13 +284,9 @@ export default function SessionDetailScreen() {
             <Pressable
               onPress={() => setHelpVisible(true)}
               hitSlop={10}
-              style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+              style={({ pressed }) => [pressed && { opacity: 0.5 }]}
             >
-              <Ionicons
-                name="help-circle-outline"
-                size={24}
-                color={colors.textSecondary}
-              />
+              <Text style={styles.helpHeaderMark}>?</Text>
             </Pressable>
           ),
         }}
@@ -1365,6 +1361,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderRadius: 2,
   },
+  helpHeaderMark: {
+    fontSize: 22,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    paddingHorizontal: 4,
+  },
+
   // ── Session help modal ─────────────────────────────────────────
   helpOverlay: {
     flex: 1,
