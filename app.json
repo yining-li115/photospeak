@@ -11,12 +11,18 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yining.photospeak",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "usesAppleSignIn": true,
       "infoPlist": {
-        "UIBackgroundModes": [
-          "audio"
-        ]
+        "UIBackgroundModes": ["audio"],
+        "NSAppTransportSecurity": {
+          "NSExceptionDomains": {
+            "47.102.40.169": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
+            }
+          }
+        }
       }
     },
     "android": {
