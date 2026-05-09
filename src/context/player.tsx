@@ -127,14 +127,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (loopRef.current) return; // single-loop is handled by player.loop
     const next = indexRef.current + 1;
     if (next < queueRef.current.length) {
-      // Defer the source swap by one tick. Without this, expo-audio's
-      // teardown of the just-finished native player races with the new
-      // player's initialization on iOS, and the new player gets stuck
-      // at isLoaded=false (next sentence never starts).
+      // Defer the source swap. expo-audio's teardown of the just-
+      // finished native player races with the new player's
+      // initialization on iOS — without this delay, the new player
+      // gets stuck at isLoaded=false. 250ms is a comfortable margin
+      // on iOS 26 (the prior 120ms intermittently lost the auto-
+      // advance in play-through mode).
       setTimeout(() => {
         setCurrentIndex(next);
         setAutoplayWanted(true);
-      }, 120);
+      }, 250);
     } else {
       // End of queue. Park the flag so togglePlay can restart cleanly.
       finishedRef.current = true;
@@ -371,16 +373,27 @@ function AudioEngine({
   }, [player, speed]);
 
   // Autoplay once the new source is loaded.
+  //
+  // Critical: do NOT consume `autoplay` immediately after calling
+  // play(). On iOS 26 the play() call can no-op silently if the audio
+  // session is mid-transition between players (e.g. right after a
+  // didJustFinish swap). We only consume the flag after status.playing
+  // has actually flipped to true — so if the first attempt fails, the
+  // effect will retry on the next status change.
   useEffect(() => {
     if (!autoplay) return;
     if (!status.isLoaded) return;
+    if (status.playing) {
+      // play() took effect — clear the flag.
+      onAutoplayConsumed();
+      return;
+    }
     try {
       player.play();
     } catch {
       /* swallow */
     }
-    onAutoplayConsumed();
-  }, [autoplay, status.isLoaded, player, onAutoplayConsumed]);
+  }, [autoplay, status.isLoaded, status.playing, player, onAutoplayConsumed]);
 
   // didJustFinish edge — Provider decides what to do next.
   // didJustFinish stays true across multiple status snapshots, so latch it.
