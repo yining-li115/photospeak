@@ -1,4 +1,18 @@
-const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
+/**
+ * Local-only Whisper client (dev convenience).
+ *
+ * Production STT goes through the backend's `/api/transcribe` proxy
+ * to DashScope; see `aliyun-asr.ts`. This file is dev-only — it
+ * speaks to a Whisper-compatible HTTP endpoint set via
+ * `EXPO_PUBLIC_WHISPER_ENDPOINT` (typically `scripts/local_whisper_server.py`
+ * on the developer's Mac). The previous fallback to OpenAI's cloud
+ * (with `EXPO_PUBLIC_OPENAI_API_KEY` baked into the bundle) was
+ * removed in P10 — that key would have shipped inside every IPA/APK.
+ *
+ * Anyone running on a real device or shipping to TestFlight should
+ * keep `EXPO_PUBLIC_STT_PROVIDER` unset (or set it to `aliyun-qwen`)
+ * so this file is never reached.
+ */
 const MODEL = 'whisper-1';
 
 export class WhisperError extends Error {
@@ -15,14 +29,13 @@ export async function transcribeAudio(
   recordingUri: string,
   options: { language?: string } = {}
 ): Promise<string> {
-  const endpoint =
-    process.env.EXPO_PUBLIC_WHISPER_ENDPOINT?.trim() || DEFAULT_ENDPOINT;
-  const isLocal = endpoint !== DEFAULT_ENDPOINT;
-  const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-
-  if (!isLocal && !apiKey) {
+  const endpoint = process.env.EXPO_PUBLIC_WHISPER_ENDPOINT?.trim();
+  if (!endpoint) {
     throw new WhisperError(
-      'No Whisper endpoint configured. Set EXPO_PUBLIC_OPENAI_API_KEY for OpenAI, or EXPO_PUBLIC_WHISPER_ENDPOINT for a local server.'
+      'Local Whisper endpoint is not configured. Either set ' +
+        'EXPO_PUBLIC_WHISPER_ENDPOINT to a local server URL, or set ' +
+        'EXPO_PUBLIC_STT_PROVIDER=aliyun-qwen to use the backend ' +
+        'proxy (production path).'
     );
   }
 
@@ -37,14 +50,8 @@ export async function transcribeAudio(
   form.append('language', options.language ?? 'en');
   form.append('response_format', 'text');
 
-  const headers: Record<string, string> = {};
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
-
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers,
     body: form,
   });
 

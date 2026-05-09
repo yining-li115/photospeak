@@ -22,6 +22,9 @@
 | **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
 | **S4** · 全局错误处理 | 2026-05-09 | Hono `onError` + 进程级 fatal handler；不 swallow，让 PM2 重启 |
 | **S5** · 限流（关键端点） | 2026-05-09 | 内存固定窗口；P2 Redis 落地后切换。每日配额留给 P16 |
+| **P6** · PG 连接池（部分）| 2026-05-09 | max 10→15；pgbouncer 等 2c4g+ 再做 |
+| **P7** · 数据库备份（本机层）| 2026-05-09 | cron `pg_dump` + 7 天 retention；OSS 异地备份等 P3/P12 |
+| **P10** · 删除客户端 OpenAI fallback | 2026-05-09 | 客户端不再持有任何上游 API key |
 | **Q2** · `/api/*` 抽到 `routes/proxy.ts` | 2026-05-09 | 随 S2 一起做 |
 
 ---
@@ -172,20 +175,22 @@
 - **问题**：上游 hang 住时连接一直挂着，慢慢吃光资源。
 - **修复方向**：超时后返回 504，让客户端可以重试或降级。
 
-### P6 · PG 连接池 + pgbouncer
-- [ ] `max` 从 10 升到 20–30
-- [ ] 引入 pgbouncer（transaction pooling 模式）
-- [ ] 监控连接等待队列
-- **文件**：[backend/src/db/client.ts:11-17](../backend/src/db/client.ts#L11-L17)
+### P6 · PG 连接池 + pgbouncer 🟡（部分完成 2026-05-09）
+- [x] `max` 从 10 升到 15（保守一档；2c4g+ 后再升 20-30）
+- [ ] pgbouncer——LAS 1c1g 还跑不动多一个进程，等升 2c4g + 多进程（P9 cluster / P2 worker）后再上
+- [ ] 监控连接等待队列——等 P1 监控落地后挂上
+- **文件**：[backend/src/db/client.ts:11-21](../backend/src/db/client.ts#L11-L21)
 - **问题**：当前 max=10，多 worker / 多进程上来后立刻打满。
 - **修复方向**：pgbouncer 后大量短连接复用少量真实 PG 连接，应用侧不用关心精确数量。
 
-### P7 · 数据库备份机制
-- [ ] 短期：ECS 上加 `pg_dump` cron + 上传 OSS（保留 30 天）
-- [ ] 长期：迁移 Aliyun RDS PostgreSQL（自动快照 + 时间点恢复）
-- **文件**：当前 backend/README.md 无备份说明
-- **问题**：自管 PG 在 ECS 上，磁盘损坏 / 误删表 = 数据全丢，没有恢复路径。
-- **修复方向**：先 cron 兜底，迁移 RDS 是 P11 的一部分。
+### P7 · 数据库备份机制 ✅（2026-05-09，本机层）
+- [x] `backend/scripts/backup.sh`：每天 cron 跑 `pg_dump` → `/var/backups/photospeak/`，gzip 压缩，7 天 retention
+- [x] `backend/README.md` 加部署 + cron 配置 + 恢复指令
+- [ ] OSS 异地备份——等 P3 / P12 OSS 通路就绪后在脚本末尾加 `ossutil cp`，目前只防误删表 / migration 失误，不防 LAS 整盘损坏
+- [ ] 长期迁 Aliyun RDS（自动快照 + 时间点恢复）——P11 一并做
+- **文件**：[backend/scripts/backup.sh](../backend/scripts/backup.sh)、[backend/README.md](../backend/README.md)
+- **当前防什么**：误 DROP TABLE、migration 跑坏、人为误改数据 → 7 天内可恢复
+- **当前不防**：LAS 物理损坏 / 整盘抹除 → 备份和数据库在同一块磁盘上，OSS 异地备份接上后才完整
 
 ### P8 · 日志结构化 + 轮转
 - [ ] `console.log` 替换为 pino（或类似）
@@ -201,12 +206,12 @@
 - **问题**：当前单进程，CPU 多核浪费。
 - **修复方向**：cluster mode 立刻拿到 N 倍 CPU 吞吐，但要求后端无状态（P2 完成后自然满足）。注意限流 / 缓存若用进程内存会失效，必须迁到 Redis（P2 引入）。
 
-### P10 · 删除客户端 OpenAI fallback
-- [ ] 删除 [src/api/whisper.ts](../src/api/whisper.ts) 里 `EXPO_PUBLIC_OPENAI_API_KEY` 路径
-- [ ] 统一走后端 `/api/transcribe`（即 DashScope）
-- **文件**：[src/api/whisper.ts:21, 41-42](../src/api/whisper.ts#L21)
-- **问题**：如果该环境变量被设置，OpenAI key 会进 JS bundle，被解包即可提取。当前条件性触发，但保留路径就是隐患。
-- **修复方向**：彻底删除 fallback，确保客户端永远不持有任何上游 API key。
+### P10 · 删除客户端 OpenAI fallback ✅（2026-05-09）
+- [x] [src/api/whisper.ts](../src/api/whisper.ts)：移除 `EXPO_PUBLIC_OPENAI_API_KEY` 分支；endpoint 未配置时直接抛错（不再 fallback 到 OpenAI 公网）
+- [x] [src/api/stt.ts](../src/api/stt.ts)：默认 provider 从 `whisper` 翻成 `aliyun-qwen`，只有显式设 `EXPO_PUBLIC_STT_PROVIDER=whisper` 才走本地 dev path
+- [x] [.env.example](../.env.example)：删除 `EXPO_PUBLIC_OPENAI_API_KEY` + `EXPO_PUBLIC_DASHSCOPE_API_KEY` 字段，加 deprecation 说明
+- **文件**：[src/api/whisper.ts](../src/api/whisper.ts)、[src/api/stt.ts](../src/api/stt.ts)、[.env.example](../.env.example)
+- **保留**：`whisper.ts` 还在仓库里，但只服务于本地 dev（用户在 Mac 跑 `scripts/local_whisper_server.py`）。production 走 backend 代理永远到不了这条路径。
 
 ### P11 · 横向扩展准备 + 迁移 Aliyun RDS
 - [ ] 自管 PG → Aliyun RDS PostgreSQL（主从 + 自动备份）
@@ -222,6 +227,21 @@
 - **文件**：当前音频 URL 由后端代理或本地路径
 - **问题**：后端流音频会占带宽和 CPU。
 - **修复方向**：后端只签 URL，不参与音频字节传输。配合 P3、P4 自然成形。
+
+### P24 · 客户端音频存储治理（云优先 + LRU 缓存）
+- [ ] TTS 音频后端生成时直接上 OSS（**依赖 P4**——TTS 缓存的 OSS 是同一份存储）
+- [ ] 客户端拿 OSS 签名 URL 流式播放，本地不再永久持有（**依赖 P12** OSS + CDN 出口）
+- [ ] 本地改成 LRU 缓存，上限 200-500MB；满了淘汰最久没播的 session 的 TTS 文件
+- [ ] 保留：用户录音、原图、缩略图（体积小且有"我之前说过什么"的纪念价值）
+- [ ] 设置页 / Home 页：显示当前缓存大小 + 手动清理按钮 + ⭐"保留此 session" 标记
+- [ ] 离线行为：命中缓存可播，未缓存的 session 在 listening 列表灰显并提示"上线后可播"
+- [ ] 一次性迁移：现有用户本地的 WAV 文件上传到 OSS、回填 `sentence_audio_uris` 为云端 URL（迁移脚本，对老用户透明）
+- **问题**：当前所有 TTS 音频（WAV 未压缩 + 每句一文件）+ 用户录音 + 照片**全部永久保存在手机本地**。每个 session 平均 7-22MB，每天 1 session 用半年就占手机 1-2GB。3-6 个月后真用户会开始抱怨。
+- **不做的折中**：
+  - 仅改 MP3（省 6×）→ 只是把"3 个月开始痛"推到"1 年开始痛"，治标
+  - 仅加本地清理 UI → 用户清完丢失记录，体验差
+  - 这件事**要做就做对**：音频 source of truth 在云端，本地是有上限的缓存。这是行业标配（每日英语听力、Apple Podcasts、Spotify、网易云）的做法。
+- **依赖图**：P3（OSS 上传基础设施）+ P4（TTS 缓存到 OSS）+ P12（OSS + CDN 出口）→ 三件都到位后这件事才能优雅落地。所以 P24 进 Phase 4 末段，等前置就绪后一起做。
 
 ### P13 · 上游并发配额谈判
 - [ ] 联系 MiMo / DashScope 提升并发 quota
@@ -375,8 +395,8 @@ P2（队列 + worker）→ **P14（LLM Gateway 抽象）** → P3（音频走 OS
 **关键提示**：P14 必须和 P2 同期做。P2 在改 routes 时顺手抽 LLM Gateway 出来，比之后单独回来重构便宜一个数量级。
 
 ### Phase 4：横向扩展
-P9（PM2 cluster）→ P6（连接池 + pgbouncer）→ P11（RDS + SLB + 多 ECS）→ P12（OSS + CDN 出口）→ P7（备份）→ P13（上游配额谈判）
-完成后：1000 并发不是问题。
+P9（PM2 cluster）→ P6（连接池 + pgbouncer）→ P11（RDS + SLB + 多 ECS）→ P12（OSS + CDN 出口）→ **P24（客户端云优先音频存储 + LRU 缓存）**→ P7（备份）→ P13（上游配额谈判）
+完成后：1000 并发不是问题，用户手机也不会被音频塞爆。
 
 ### Phase 5：运营成熟度（用户量起来后陆续做）
 按"出问题概率 × 后果严重性"排序：
