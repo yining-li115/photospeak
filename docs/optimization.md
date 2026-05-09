@@ -19,6 +19,7 @@
 | 项 | 完成时间 | 备注 |
 |----|---------|------|
 | **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
+| **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
 | **Q2** · `/api/*` 抽到 `routes/proxy.ts` | 2026-05-09 | 随 S2 一起做 |
 
 ---
@@ -97,11 +98,10 @@
   - 字符串 / 数组 / 数字都加了上界，配合 bodyLimit 形成两道闸
 - **遗留**：未来 P14 LLM Gateway 起来后，schema + 路由应迁过去，`fetch` 直接调用消失。
 
-### S3 · CORS 收紧
-- [ ] `cors()` 改为白名单 origin，或干脆移除
-- **文件**：[backend/src/index.ts:49](../backend/src/index.ts#L49)
-- **问题**：`cors()` 无参数 = `origin: '*'`，任意网页可跨域命中 API。
-- **修复方向**：mobile 客户端不需要 CORS——可以仅对 `/privacy`、`/terms`、`/health` 这类公共路径开 CORS，对 `/api/*` 和 `/auth/*` 完全不开。如果保留 CORS，origin 限定为已备案域名。
+### S3 · CORS 收紧 ✅（2026-05-09）
+- [x] 直接移除了 wildcard `cors()`——mobile 客户端不走 CORS，`/privacy`+`/terms` 是浏览器直接导航也用不上 CORS
+- **文件**：[backend/src/index.ts:44-51](../backend/src/index.ts#L44-L51)
+- **遗留**：将来上 Web 客户端（Q6）时，在原位置加 `cors({ origin: [...] })`，origin 限定到已备案前端域名——comment 已留好提示。
 
 ### S4 · 全局错误处理
 - [ ] Hono 加 `app.onError()`

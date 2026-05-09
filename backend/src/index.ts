@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import { type AuthVars } from './auth/middleware.js';
 import { privacyHtml } from './legal.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -44,8 +43,13 @@ function readEnv(): Env {
 const env = readEnv();
 const app = new Hono<{ Variables: AuthVars }>();
 
-app.use('*', cors());
-
+// No CORS middleware on purpose. The only client today is React
+// Native, whose fetch doesn't enforce same-origin policy, and the
+// public HTML pages (/privacy, /terms) are reached via direct
+// browser navigation rather than cross-origin XHR. If a Web client
+// (see optimization.md Q6) materializes, add `cors({ origin: [...] })`
+// here scoped to known frontend origins — never wildcard.
+//
 // Public liveness checks.
 app.get('/', (c) => c.text('PhotoSpeak API · ok'));
 app.get('/health', (c) =>
