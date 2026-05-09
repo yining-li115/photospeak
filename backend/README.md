@@ -5,15 +5,18 @@ ship inside the iOS / Android binary. Designed to run on a small Aliyun
 Lightweight Application Server in mainland China — same network as the
 upstreams it proxies, low latency, no GFW round-trip.
 
-> Status: scaffolding only. The mobile app still calls MiMo / DashScope
-> directly. Once this is deployed and `curl` against `/health` works, we'll
-> migrate `src/api/*.ts` one client at a time.
+> Status: live. The mobile app routes all MiMo / DashScope calls
+> through this proxy. Auth is per-user JWT issued by `/auth/*` (Apple
+> Sign-In or SMS code). The legacy `APP_SHARED_TOKEN` shared-bearer
+> path still exists in `requireAuth` for historical IPA/APK builds but
+> is being sunsetted — see `docs/optimization.md` S1.
 
 ## Architecture
 
 ```
 [ Mobile app ]
-      │  Authorization: Bearer <APP_SHARED_TOKEN>
+      │  Authorization: Bearer <per-user JWT>     (current)
+      │  Authorization: Bearer <APP_SHARED_TOKEN> (legacy, sunsetting)
       ▼
 [ Aliyun Lightweight Server (Node.js + Hono via PM2) ]
       │  upstream credentials live in the host environment
@@ -21,7 +24,8 @@ upstreams it proxies, low latency, no GFW round-trip.
 [ MiMo / DashScope ]
 ```
 
-Endpoints (all require `Authorization: Bearer <APP_SHARED_TOKEN>`):
+Endpoints (all require `Authorization: Bearer <JWT>`; legacy shared
+token still accepted for old builds):
 
 | Method | Path             | Forwards to                                                            |
 | ------ | ---------------- | ---------------------------------------------------------------------- |
@@ -241,25 +245,34 @@ pm2 reload photospeak-api    # zero-downtime
 
 ---
 
-## What the mobile app needs (later)
-
-Once this is live we'll set in the mobile `.env`:
+## Mobile client config
 
 ```
 EXPO_PUBLIC_API_BASE=https://api.your-domain.com
-EXPO_PUBLIC_API_TOKEN=<same APP_SHARED_TOKEN>
+# EXPO_PUBLIC_API_TOKEN=  # ⚠️ deprecated — leave empty in new builds (S1)
 ```
 
-…and rewire `src/api/mimo.ts`, `src/api/mimo-tts.ts`, `src/api/aliyun-asr.ts`
-to point at the proxy instead of MiMo / DashScope directly. The MiMo /
-DashScope keys then leave the mobile bundle entirely.
+`src/api/backend.ts` is the central HTTP wrapper for the proxy; it
+reads JWT from `expo-secure-store` and refreshes on 401. Per-feature
+clients (`mimo.ts`, `mimo-tts.ts`, `aliyun-asr.ts`) all call through it.
+
+Every request also carries `X-Client-Version` and `X-Client-Platform`
+so the server can correlate users to app versions when deciding when
+to retire deprecated auth or API paths.
 
 ---
 
-## What's not here yet (planned)
+## Tech debt / roadmap
 
-- **Real per-user auth.** `APP_SHARED_TOKEN` is a single shared secret —
-  anyone who has it can hit your server. Phase 2 adds user signup/login,
-  per-user JWTs, rate limiting.
-- **Usage logging.** Once we have users we should log who hit which endpoint
-  and how many tokens they spent so we can spot abuse.
+See [`../docs/optimization.md`](../docs/optimization.md) for the
+prioritized list. Highlights for this codebase:
+
+- 🔴 **S1** — Sunset `APP_SHARED_TOKEN`. Current step: middleware logs
+  `mode: 'jwt' | 'legacy'` per request so we can watch the decay.
+- 🔴 **S2** — `/api/*` is a verbatim passthrough. Add zod validation +
+  body-size limit. New endpoints should route through the future LLM
+  Gateway (P14), not copy the existing `fetch + passthrough` pattern.
+- 🔴 **S3** — `cors()` is wide open; restrict origins.
+- 🔴 **S4 / S5** — No `app.onError()` and no rate limiting yet.
+- 🟡 **P2 / P14** — Synchronous proxy + no LLM Gateway abstraction.
+  This is the next big architectural change before scaling further.

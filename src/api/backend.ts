@@ -10,9 +10,17 @@
  * Call sites: auth.ts (login flows), mimo.ts / mimo-tts.ts /
  * aliyun-asr.ts (proxied API calls).
  */
+import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 const BASE = (process.env.EXPO_PUBLIC_API_BASE ?? '').replace(/\/$/, '');
+
+// Sent on every backend request so the server can correlate users to
+// app versions and decide when it's safe to retire deprecated auth
+// paths. See docs/optimization.md S1.
+const CLIENT_VERSION = Constants.expoConfig?.version ?? 'unknown';
+const CLIENT_PLATFORM = Platform.OS;
 
 const ACCESS_KEY = 'access_token';
 const REFRESH_KEY = 'refresh_token';
@@ -99,7 +107,11 @@ export async function backendRequest<T = unknown>(
   const url = `${BASE}${path.startsWith('/') ? path : `/${path}`}`;
 
   const buildHeaders = async (): Promise<Record<string, string>> => {
-    const h: Record<string, string> = { 'Content-Type': 'application/json' };
+    const h: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Client-Version': CLIENT_VERSION,
+      'X-Client-Platform': CLIENT_PLATFORM,
+    };
     if (withAuth) {
       const token = await getAccessToken();
       if (token) h['Authorization'] = `Bearer ${token}`;
@@ -163,7 +175,11 @@ async function tryRefresh(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Client-Version': CLIENT_VERSION,
+        'X-Client-Platform': CLIENT_PLATFORM,
+      },
       body: JSON.stringify({ refresh_token: rt }),
     });
     if (!res.ok) return false;

@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { verifyToken } from './jwt.js';
 
 /**
@@ -12,6 +12,36 @@ export type AuthVars = {
    *  (like /auth/me) when no real user is identified. */
   isLegacyToken: boolean;
 };
+
+/**
+ * Emit one structured JSON line per authed request so we can grep PM2
+ * logs for legacy-vs-jwt traffic mix. Drives the S1 sunset decision —
+ * once legacy traffic decays below threshold, the legacy branch in
+ * `requireAuth` can be removed.
+ */
+function logAuth(
+  c: Context,
+  mode: 'jwt' | 'legacy',
+  userId: string
+): void {
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      event: 'auth',
+      path: c.req.path,
+      method: c.req.method,
+      mode,
+      userId,
+      clientVersion: c.req.header('x-client-version') || '',
+      clientPlatform: c.req.header('x-client-platform') || '',
+      userAgent: (c.req.header('user-agent') || '').slice(0, 120),
+      ip:
+        c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+        c.req.header('x-real-ip') ||
+        '',
+    })
+  );
+}
 
 /**
  * Standard auth gate for /api/*. Accepts:
@@ -32,6 +62,7 @@ export function requireAuth(legacySharedToken?: string): MiddlewareHandler<{
     if (legacySharedToken && token === legacySharedToken) {
       c.set('userId', '');
       c.set('isLegacyToken', true);
+      logAuth(c, 'legacy', '');
       await next();
       return;
     }
@@ -40,6 +71,7 @@ export function requireAuth(legacySharedToken?: string): MiddlewareHandler<{
       const payload = verifyToken(token, 'access');
       c.set('userId', payload.sub);
       c.set('isLegacyToken', false);
+      logAuth(c, 'jwt', payload.sub);
       await next();
     } catch {
       return c.json({ error: 'unauthorized' }, 401);
@@ -63,6 +95,7 @@ export function requireUser(): MiddlewareHandler<{ Variables: AuthVars }> {
       const payload = verifyToken(token, 'access');
       c.set('userId', payload.sub);
       c.set('isLegacyToken', false);
+      logAuth(c, 'jwt', payload.sub);
       await next();
     } catch {
       return c.json({ error: 'unauthorized' }, 401);
