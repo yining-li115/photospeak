@@ -267,6 +267,42 @@ Smoke test alone (no deploy):
 ./scripts/smoke-test.sh --base http://localhost:3001
 ```
 
+### Database backups
+
+A `pg_dump` cron is the cheapest disaster-recovery layer for the
+self-hosted Postgres on the LAS. `scripts/backup.sh` writes
+compressed dumps to `/var/backups/photospeak/` with 7-day retention.
+
+One-time setup:
+
+```bash
+# 1. Backup directory the cron user can write to:
+sudo mkdir -p /var/backups/photospeak
+sudo chown $USER /var/backups/photospeak
+
+# 2. Smoke-test a manual run (loads DATABASE_URL from backend/.env):
+cd /opt/photospeak/backend
+set -a && source .env && set +a && ./scripts/backup.sh
+
+# 3. Install the cron:
+crontab -e
+# Add (4 AM UTC daily):
+# 0 4 * * * cd /opt/photospeak/backend && set -a && . ./.env && set +a && ./scripts/backup.sh >> /var/log/photospeak-backup.log 2>&1
+```
+
+Restore from a dump:
+
+```bash
+gunzip -c /var/backups/photospeak/photospeak-YYYYMMDD-HHMMSS.dump.gz \
+  | pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL"
+```
+
+Off-host upload (Aliyun OSS) is intentionally NOT here yet — until
+that's wired up the dumps protect against migration mistakes /
+accidental `DROP TABLE`, but not against a full LAS disk loss.
+Roadmap item P3 / P12 (OSS plumbing) unlocks adding an `ossutil cp`
+step at the end of `backup.sh`.
+
 ### Rolling back manually
 
 If you suspect a deploy is bad and the auto-rollback didn't fire (e.g.
