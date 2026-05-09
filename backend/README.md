@@ -232,15 +232,52 @@ pm2 restart photospeak-api
 pm2 stop photospeak-api
 ```
 
-To deploy a code change:
+### Deploying a code change
+
+Use the deploy script — it auto-rolls-back on failure so you can't end
+up half-deployed:
 
 ```bash
-cd /opt/photospeak
-git pull
+cd /opt/photospeak/backend
+./scripts/deploy.sh
+```
+
+What it does, in order, with auto-rollback if anything fails:
+
+1. Records the prior commit (the rollback target).
+2. `git pull --ff-only` to `origin/main`.
+3. Tags the new commit `deploy-YYYYMMDD-HHMMSS` so you can always
+   `git checkout deploy-2026-05-09-1430` later.
+4. `npm install --omit=dev`, `npm run build`, `npm run db:migrate`.
+5. `pm2 reload photospeak-api --update-env`.
+6. Runs `scripts/smoke-test.sh` against `localhost:3000` —
+   `/health`, `/privacy`, and `/api/transcribe` (must 401 unauth'd).
+7. If any of 4–6 fails, resets HEAD to the prior commit, rebuilds,
+   reloads. PM2 ends up running the prior version, period.
+
+Flags:
+- `--skip-smoke` skip the post-deploy smoke test
+- `--no-migrate` skip drizzle migrations (pure code change)
+
+Smoke test alone (no deploy):
+
+```bash
+./scripts/smoke-test.sh
+# or against a staging port:
+./scripts/smoke-test.sh --base http://localhost:3001
+```
+
+### Rolling back manually
+
+If you suspect a deploy is bad and the auto-rollback didn't fire (e.g.
+smoke test passed but real users see issues), pick the prior tag:
+
+```bash
+git tag --sort=-creatordate | head -5    # see recent deploy tags
+git checkout deploy-2026-05-09-1430      # the one before the bad deploy
 cd backend
-npm install         # only if package.json changed
 npm run build
-pm2 reload photospeak-api    # zero-downtime
+pm2 reload photospeak-api --update-env
 ```
 
 ---
