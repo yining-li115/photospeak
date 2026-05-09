@@ -1,6 +1,8 @@
 # PhotoSpeak — CLAUDE.md
 
-This file gives you everything you need to implement this project. Read it fully before writing any code.
+This file gives you everything you need to work on this project. Read it fully before writing any code.
+
+> **Roadmap & known tech debt:** see [`docs/optimization.md`](docs/optimization.md) for the current optimization plan, severity-tiered findings, and Phase ordering. Anything marked TODO there shouldn't be re-derived from this file — check the roadmap first.
 
 ---
 
@@ -10,7 +12,7 @@ PhotoSpeak is a mobile English speaking practice app. Every day, the user picks 
 1. Transcribes the recording
 2. Sends photo + transcript to an LLM for correction, polishing, and chunk extraction
 3. Lets the user review results and chat with AI in a session interface
-4. On user confirmation, generates a podcast-style audio and creates SRS flashcards
+4. On user confirmation, generates per-sentence TTS audio and creates SRS flashcards
 
 The goal is a seamless, zero-friction daily learning loop.
 
@@ -23,13 +25,14 @@ The goal is a seamless, zero-friction daily learning loop.
 | Mobile framework | React Native + Expo | iOS + Android, one codebase |
 | Audio recording | expo-av | Cross-platform |
 | Photo library access | expo-image-picker | Cross-platform |
-| Pipeline framework | LangGraph (JS) | Linear pipeline, node-level retry |
-| STT | OpenAI Whisper API | Best accuracy for non-native accents |
-| LLM analysis | Claude API (claude-sonnet-4-20250514) | Vision + language, structured JSON output |
-| TTS | ElevenLabs API | Per-sentence audio files |
-| SRS algorithm | FSRS | Modern spaced repetition |
-| Local storage | expo-sqlite + expo-file-system | Offline-first |
-| Backend (early stage) | None — client calls APIs directly | Keep it simple |
+| Pipeline orchestration | Plain async/await in `src/services/generate.ts` | No framework — linear flow, easy to debug |
+| STT | Aliyun DashScope ASR (Qwen) **or** OpenAI Whisper (fallback) | Switchable via `EXPO_PUBLIC_STT_PROVIDER`. DashScope is the production path. |
+| LLM analysis | MiMo (`api.xiaomimimo.com/v1/chat/completions`) | Vision + language, structured JSON output |
+| TTS | MiMo TTS (same chat/completions endpoint, audio response) | Per-sentence, returns base64 |
+| SRS algorithm | FSRS (`ts-fsrs`) | Modern spaced repetition |
+| Local storage | expo-sqlite + expo-file-system | Offline-first; storage paths kept relative to documentDirectory |
+| Backend | Node.js + Hono + PostgreSQL (Drizzle ORM) | Deployed on Aliyun ECS via PM2. Hosts auth + acts as proxy for upstream LLM/STT/TTS APIs. |
+| Auth | Apple Sign-In + SMS code (Aliyun SMS), JWT access + refresh | Tokens stored in `expo-secure-store` |
 
 ---
 
@@ -37,55 +40,80 @@ The goal is a seamless, zero-friction daily learning loop.
 
 ```
 photospeak/
-├── app/                        # Expo Router file-based routing
+├── app/                            # Expo Router
+│   ├── (auth)/
+│   │   ├── welcome.tsx
+│   │   ├── phone.tsx
+│   │   └── verify.tsx
 │   ├── (tabs)/
-│   │   ├── sessions/
-│   │   │   ├── index.tsx       # Session list + "+" new session button
-│   │   │   └── [id].tsx        # Session detail (chatbot view)
-│   │   ├── listening/
-│   │   │   ├── index.tsx       # Podcast list
-│   │   │   └── [id].tsx        # Player screen
-│   │   ├── cards/
-│   │   │   └── index.tsx       # SRS review screen
-│   │   └── home/
-│   │       └── index.tsx       # Dashboard (streak, stats)
-│   └── _layout.tsx             # Root layout with bottom tab nav
+│   │   ├── sessions/{index,[id],_layout}.tsx
+│   │   ├── listening/{index,[id],_layout}.tsx
+│   │   ├── cards/{index,_layout}.tsx
+│   │   └── home/{index,_layout}.tsx
+│   ├── _layout.tsx
+│   └── index.tsx                   # Routing root (auth gate)
 │
 ├── src/
-│   ├── pipeline/               # LangGraph pipeline
-│   │   ├── nodes/
-│   │   │   ├── transcribe.ts   # STT node (Whisper)
-│   │   │   ├── analyze.ts      # LLM node (Claude)
-│   │   │   └── synthesize.ts   # TTS node (ElevenLabs)
-│   │   ├── state.ts            # Pipeline state type definition
-│   │   └── graph.ts            # LangGraph graph assembly
+│   ├── api/                        # External API clients (production paths go via backend)
+│   │   ├── backend.ts              # Central fetch wrapper: auth header, 401 → refresh → retry
+│   │   ├── auth.ts                 # /auth/* client (apple, send-code, verify, refresh, me, logout)
+│   │   ├── stt.ts                  # Dispatches to whisper.ts or aliyun-asr.ts based on EXPO_PUBLIC_STT_PROVIDER
+│   │   ├── aliyun-asr.ts           # Calls backend /api/transcribe (DashScope passthrough)
+│   │   ├── mimo.ts                 # Calls backend /api/analyze (MiMo passthrough) + chat follow-up
+│   │   ├── mimo-tts.ts             # Calls backend /api/tts
+│   │   └── whisper.ts              # ⚠️ Legacy direct-OpenAI fallback. Slated for removal (P10).
 │   │
-│   ├── api/                    # External API clients
-│   │   ├── whisper.ts
-│   │   ├── claude.ts
-│   │   └── elevenlabs.ts
+│   ├── services/                   # Domain orchestration (pipeline lives here, not in /api)
+│   │   ├── generate.ts             # Confirm-Generate flow: TTS each sentence, persist, create cards
+│   │   ├── queue.ts                # Build player queue from session(s)
+│   │   └── delete.ts               # Soft delete + cascade cleanup
 │   │
-│   ├── db/                     # SQLite database layer
-│   │   ├── schema.ts           # Table definitions
-│   │   ├── sessions.ts         # Session CRUD
-│   │   ├── cards.ts            # SRS card CRUD
-│   │   └── stats.ts            # Streak / listening time queries
+│   ├── context/
+│   │   ├── auth.tsx                # AuthContext: token state, login/logout, app-launch refresh
+│   │   └── player.tsx              # Audio player state
+│   │
+│   ├── db/                         # Local SQLite layer
+│   │   ├── schema.ts
+│   │   ├── sessions.ts
+│   │   ├── cards.ts
+│   │   └── stats.ts
 │   │
 │   ├── srs/
-│   │   └── fsrs.ts             # FSRS algorithm implementation
+│   │   └── fsrs.ts                 # ts-fsrs wrapper
 │   │
-│   ├── hooks/                  # Custom React hooks
-│   │   ├── useAudioRecorder.ts
-│   │   ├── useAudioPlayer.ts
-│   │   └── useSRSReview.ts
+│   ├── storage/                    # File system helpers
+│   │   ├── audio.ts
+│   │   ├── photos.ts
+│   │   ├── recordings.ts
+│   │   ├── picker.ts
+│   │   └── resolve.ts              # Resolves stored relative paths → absolute documentDirectory URIs
 │   │
-│   └── types/
-│       └── index.ts            # Shared TypeScript types
+│   ├── hooks/{useAudioRecorder,useAudioPlayer,useSRSReview}.ts
+│   ├── components/                 # App-specific components (separate from /components Expo template UI)
+│   └── types/index.ts              # Shared TypeScript types
+│
+├── backend/                        # Hono + PostgreSQL backend
+│   ├── src/
+│   │   ├── index.ts                # App entry: CORS, auth routes, /api/* proxy routes
+│   │   ├── auth/
+│   │   │   ├── jwt.ts              # signToken / verifyToken (access + refresh)
+│   │   │   ├── middleware.ts       # requireAuth (allows legacy shared token), requireUser (strict)
+│   │   │   ├── apple.ts            # Apple Sign-In identity_token verification
+│   │   │   └── sms.ts              # Aliyun SMS send + verify
+│   │   ├── routes/auth.ts          # /auth/apple, /auth/send-code, /auth/verify, /auth/refresh, /auth/me, /auth/logout
+│   │   ├── db/{client,schema,migrate}.ts
+│   │   └── legal.ts                # /privacy + /terms HTML
+│   ├── drizzle/                    # SQL migrations
+│   ├── ecosystem.config.cjs        # PM2 config
+│   └── README.md                   # Deploy + ops notes
+│
+├── docs/
+│   ├── PhotoSpeak_PRD.md
+│   └── optimization.md             # ⭐ Roadmap + tech debt
 │
 ├── assets/
-├── .env                        # API keys (never commit)
-├── CLAUDE.md                   # This file
-└── PRD.md                      # Full product requirements
+├── .env / .env.example             # Client env (never commit .env)
+└── CLAUDE.md                       # This file
 ```
 
 ---
@@ -93,19 +121,20 @@ photospeak/
 ## Core Data Types
 
 ```typescript
-// src/types/index.ts
+// src/types/index.ts (canonical — do not duplicate elsewhere)
 
 export interface Session {
   id: string
   created_at: string
-  photo_uri: string                  // local path to photo
-  photo_thumbnail_uri: string        // resized thumbnail
-  recording_uri: string              // original recording
-  transcript: string                 // Whisper output
+  photo_uri: string                  // RELATIVE to documentDirectory
+  photo_thumbnail_uri: string        // RELATIVE
+  recording_uri: string              // RELATIVE
+  transcript: string
   corrected_sentences: CorrectedSentence[]
-  polished_sentences: string[]       // per-sentence, maps to audio files
+  polished_sentences: string[]       // per-sentence; maps to sentence_audio_uris by index
+  sentence_audio_uris: string[]      // RELATIVE
   chunks: Chunk[]
-  chat_history: ChatMessage[]        // full AI chat log
+  chat_history: ChatMessage[]
   podcast_generated: boolean
   cards_generated: boolean
 }
@@ -114,206 +143,92 @@ export interface CorrectedSentence {
   original: string
   corrected: string
   error_type: 'grammar' | 'vocabulary' | 'preposition' | 'article' | 'other'
-  explanation: string
+  explanation: string                // in Chinese for clarity
   is_common_for_chinese_speakers: boolean
 }
 
 export interface Chunk {
   id: string
-  chunk: string                      // e.g. "captures a lively scene"
-  usage_note: string
+  chunk: string
+  usage_note: string                 // in Chinese
   examples: ChunkExample[]
 }
 
 export interface ChunkExample {
   text: string
-  audio_uri: string                  // local path to TTS audio
-}
-
-export interface Card {
-  id: string
-  chunk_id: string
-  chunk: string
-  usage_note: string
-  examples: ChunkExample[]
-  photo_thumbnail_uri: string
-  source_session_id: string
-  created_at: string
-  next_review_at: string
-  stability: number                  // FSRS parameter
-  difficulty: number                 // FSRS parameter
-  review_history: ReviewRecord[]
-}
-
-export interface ReviewRecord {
-  date: string
-  rating: 1 | 2 | 3 | 4             // FSRS: Again / Hard / Good / Easy
-}
-
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: string
+  audio_uri: string                  // RELATIVE; currently empty — see Key Decisions
 }
 ```
+
+**Storage path invariant**: all `*_uri` fields are stored *relative* to `FileSystem.documentDirectory`. iOS reinstalls / OTA updates change the absolute UUID prefix, which would break absolute paths. Always resolve via `src/storage/resolve.ts` at the read boundary.
 
 ---
 
-## Pipeline (LangGraph)
+## Pipeline (current architecture)
 
-The pipeline is linear and deterministic. Each node is independent and can be retried individually on failure.
+The pipeline is linear and lives in `src/services/generate.ts`. **No LangGraph or other framework** — plain async/await.
 
-### State definition
+**Phase A — recording → analysis** (runs while user waits, in `app/(tabs)/sessions/[id].tsx`):
+1. User picks photo + records audio → photo + recording stored locally with relative URIs
+2. `src/api/stt.ts` → backend `/api/transcribe` → DashScope → transcript
+3. `src/api/mimo.ts` → backend `/api/analyze` → MiMo → structured JSON (corrections + polished sentences + chunks)
+4. UI displays results as chat bubbles. Follow-up questions: each call sends full chat history + photo back through `/api/analyze`.
 
-```typescript
-// src/pipeline/state.ts
+**Phase B — confirm-generate** (runs only when user clicks "Confirm & Generate"):
+1. `src/services/generate.ts` loops over `polished_sentences`, calls `mimo-tts.ts` → backend `/api/tts` for each
+2. Each base64 audio response is written to file system via `src/storage/audio.ts`, returning a relative URI
+3. Session row persisted via `src/db/sessions.ts` (with all relative URIs)
+4. Cards created via `src/db/cards.ts` (one card per chunk)
+5. Stats bumped via `src/db/stats.ts`
 
-export interface PipelineState {
-  // Inputs
-  photo_base64: string
-  recording_uri: string
-
-  // Node outputs
-  transcript?: string
-  analysis?: {
-    corrected_sentences: CorrectedSentence[]
-    polished_sentences: string[]
-    chunks: Chunk[]
-  }
-  sentence_audio_uris?: string[]     // one per polished sentence
-  chunk_example_audio_uris?: string[][] // [chunk_index][example_index]
-
-  // Error tracking
-  errors: Record<string, string>
-}
-```
-
-### Node: transcribe.ts (Whisper)
-
-```typescript
-// Sends audio file to Whisper API
-// Returns: transcript string
-// On failure: set errors.transcribe, do not throw
-```
-
-### Node: analyze.ts (Claude)
-
-```typescript
-// Sends photo (base64) + transcript to Claude
-// System prompt specifies: user is a Chinese native speaker
-// Returns structured JSON matching analysis type above
-// IMPORTANT: polished_sentences must be an array of individual sentences
-// Each sentence becomes one audio file — do not merge them
-```
-
-### Node: synthesize.ts (ElevenLabs)
-
-```typescript
-// Called ONLY after user clicks "Confirm Generate"
-// Generates one audio file per polished sentence
-// Also generates audio for each chunk example sentence
-// Saves all files to expo-file-system, stores paths in state
-// Use a single fixed voice ID across all generations (store in .env)
-```
-
-### Graph assembly
-
-```typescript
-// src/pipeline/graph.ts
-// Nodes run in sequence: transcribe → analyze
-// synthesize runs separately, triggered by user confirmation
-// Use LangGraph StateGraph with typed state
-```
+**Important constraints:**
+- `polished_sentences` must remain an array — each item becomes one TTS audio file. Do **not** merge them.
+- TTS runs **only after** user confirms — keeps cost down for abandoned sessions.
+- Use a single fixed voice (server-side `MIMO_VOICE_ID`) for consistency.
+- Chunk examples currently get **no audio** (text-only). The cards UI was simplified and per-example audio was dropped to save TTS calls. To reintroduce, add a second loop in `generate.ts`.
 
 ---
 
-## API Clients
+## Backend Contract
 
-### Claude (src/api/claude.ts)
+The backend has two roles:
 
-Model: `claude-sonnet-4-20250514`
+**1. Auth service** (`/auth/*`):
+- Apple Sign-In: `POST /auth/apple` with `identity_token`
+- Phone: `POST /auth/send-code` → `POST /auth/verify` (Aliyun SMS)
+- `POST /auth/refresh`, `GET /auth/me`, `POST /auth/logout`
+- Returns `{ access_token, refresh_token, user }`. Access token short-TTL, refresh long. Refresh tokens tracked in `refresh_tokens` for revocation.
 
-System prompt template:
-```
-You are an English language coach. The user is a native Chinese speaker learning English.
-Analyze their spoken English description of a photo.
+**2. Upstream proxy** (`/api/*`, all gated by `requireAuth`):
+- `POST /api/transcribe` → DashScope ASR
+- `POST /api/analyze` → MiMo chat completions
+- `POST /api/tts` → MiMo TTS
 
-Return ONLY valid JSON with this exact structure:
-{
-  "corrected_sentences": [
-    {
-      "original": "...",
-      "corrected": "...",
-      "error_type": "grammar|vocabulary|preposition|article|other",
-      "explanation": "...(explain in Chinese for clarity)",
-      "is_common_for_chinese_speakers": true|false
-    }
-  ],
-  "polished_sentences": [
-    "First sentence of polished version.",
-    "Second sentence.",
-    "Each sentence is a separate array item."
-  ],
-  "chunks": [
-    {
-      "id": "uuid",
-      "chunk": "the exact phrase",
-      "usage_note": "...(in Chinese)",
-      "examples": [
-        { "text": "Example sentence 1.", "audio_uri": "" },
-        { "text": "Example sentence 2.", "audio_uri": "" }
-      ]
-    }
-  ]
-}
+The proxy currently passes the body through verbatim — no validation, no body-size limit. **This is a known weakness; see optimization.md S2 + P14 (LLM Gateway).** When adding new endpoints, do **not** continue the passthrough pattern — add zod validation and route through the LLM Gateway abstraction once it exists.
 
-Select 3-5 chunks. Choose phrases with high transfer value — ones the user can reuse in many contexts.
-Do not return any text outside the JSON object.
-```
-
-User message format:
-```
-[image: base64 photo]
-[user transcript]
-```
-
-For follow-up chat messages in the session: use standard multi-turn conversation format, appending the full chat history each time.
-
-### Whisper (src/api/whisper.ts)
-
-```typescript
-// POST to https://api.openai.com/v1/audio/transcriptions
-// model: "whisper-1"
-// language: "en"
-// response_format: "text"
-```
-
-### ElevenLabs (src/api/elevenlabs.ts)
-
-```typescript
-// POST to https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}
-// model_id: "eleven_multilingual_v2"
-// Save response (binary audio) to expo-file-system
-// Return local file URI
-```
+**Auth modes accepted by `/api/*`:**
+- Per-user JWT (the long-term path)
+- Legacy `APP_SHARED_TOKEN` bearer (still accepted for older client builds, scheduled for removal — see S1)
 
 ---
 
-## Database Schema (SQLite)
+## Database
+
+**Client-side (SQLite, `src/db/schema.ts`):**
 
 ```sql
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
-  photo_uri TEXT NOT NULL,
-  photo_thumbnail_uri TEXT NOT NULL,
-  recording_uri TEXT NOT NULL,
+  photo_uri TEXT NOT NULL,            -- relative
+  photo_thumbnail_uri TEXT NOT NULL,  -- relative
+  recording_uri TEXT NOT NULL,        -- relative
   transcript TEXT,
-  corrected_sentences TEXT,    -- JSON string
-  polished_sentences TEXT,     -- JSON string (array)
-  sentence_audio_uris TEXT,    -- JSON string (array of local paths)
-  chunks TEXT,                 -- JSON string
-  chat_history TEXT,           -- JSON string
+  corrected_sentences TEXT,           -- JSON
+  polished_sentences TEXT,            -- JSON array
+  sentence_audio_uris TEXT,           -- JSON array of relative paths
+  chunks TEXT,                        -- JSON
+  chat_history TEXT,                  -- JSON
   podcast_generated INTEGER DEFAULT 0,
   cards_generated INTEGER DEFAULT 0
 );
@@ -323,130 +238,95 @@ CREATE TABLE cards (
   chunk_id TEXT NOT NULL,
   chunk TEXT NOT NULL,
   usage_note TEXT NOT NULL,
-  examples TEXT NOT NULL,      -- JSON string
-  photo_thumbnail_uri TEXT NOT NULL,
+  examples TEXT NOT NULL,             -- JSON
+  photo_thumbnail_uri TEXT NOT NULL,  -- relative
   source_session_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   next_review_at TEXT NOT NULL,
   stability REAL DEFAULT 0,
   difficulty REAL DEFAULT 0,
-  review_history TEXT DEFAULT '[]'  -- JSON string
+  review_history TEXT DEFAULT '[]'
 );
 
 CREATE TABLE stats (
-  date TEXT PRIMARY KEY,       -- YYYY-MM-DD
+  date TEXT PRIMARY KEY,              -- YYYY-MM-DD
   session_count INTEGER DEFAULT 0,
   listening_seconds INTEGER DEFAULT 0,
   cards_reviewed INTEGER DEFAULT 0
 );
 ```
 
-JSON columns: always parse/stringify at the DB layer, expose typed objects everywhere else.
+JSON columns: parse/stringify at the DB layer, expose typed objects everywhere else.
 
----
+**Server-side (PostgreSQL via Drizzle, `backend/src/db/schema.ts`):**
 
-## UI Screens
-
-### Bottom Tab Navigator
-Order: **Sessions | Listening | Cards | Home**
-
-### Sessions Tab
-- List of past sessions, sorted newest first
-- Each row: thumbnail + date + first chunk text
-- Top right: "+" button → starts new session flow
-- Tap a session → SessionDetail screen
-
-### New Session Flow (inside SessionDetail, step-by-step)
-1. Photo picker: two buttons — "Random" and "Choose"
-2. After photo selected: show photo + hold-to-record button
-3. After recording released: show "Transcribing..." → "Analyzing..." progress
-4. Results appear as chat bubbles (AI message with corrections, polished version, chunks)
-5. User can type follow-up questions — appends to chat, calls Claude with full history
-6. "Confirm & Generate" button at bottom → triggers TTS synthesis pipeline
-7. On completion: toast "Added to Listening Library · 3 cards created"
-
-### Listening Tab
-- List of sessions with generated podcasts
-- Each row: thumbnail + date + duration
-- Tap → Player screen
-  - Full polished text with sentence-level highlight sync
-  - Tap any sentence → that sentence loops
-  - Speed selector: 0.75x / 1x / 1.25x
-  - "Original Recording" toggle to switch audio source
-
-### Cards Tab
-- Daily review queue driven by FSRS next_review_at
-- Card flip animation: front (chunk + thumbnail) → back (usage note + examples + audio)
-- Rating buttons: Again / Hard / Good / Easy (maps to FSRS ratings 1-4)
-- Progress bar showing X / total cards remaining today
-
-### Home Tab (Dashboard)
-- Current streak (consecutive days with at least one session)
-- Total listening time this week / all time
-- Total cards created / mastered
-- Cards reviewed today / due today
+Currently only `users` and `refresh_tokens`. Sessions / cards / stats live **only on the device**. Whether to sync them to the server is an open product decision — see optimization.md Q4.
 
 ---
 
 ## Environment Variables
 
+**Client (`.env`, never commit):**
 ```
-# .env
-EXPO_PUBLIC_OPENAI_API_KEY=
-EXPO_PUBLIC_ANTHROPIC_API_KEY=
-EXPO_PUBLIC_ELEVENLABS_API_KEY=
-EXPO_PUBLIC_ELEVENLABS_VOICE_ID=     # pick one voice, use it consistently
+EXPO_PUBLIC_API_BASE=                # backend URL (currently HTTP IP, switching to https://api.dailyphotospeak.cn after ICP filing — S6)
+EXPO_PUBLIC_API_TOKEN=               # ⚠️ Legacy shared token — do not use in new code (S1)
+EXPO_PUBLIC_SENTRY_DSN=              # Optional; Sentry init is gated on this
+EXPO_PUBLIC_STT_PROVIDER=            # 'whisper' | 'aliyun-qwen'
+EXPO_PUBLIC_OPENAI_API_KEY=          # ⚠️ Only used by whisper.ts fallback. Slated for removal (P10).
+EXPO_PUBLIC_WHISPER_ENDPOINT=        # Optional local Whisper server URL
 ```
 
-Never hardcode API keys. Never commit .env.
+**Backend (`backend/.env`, never commit):**
+```
+DATABASE_URL=
+JWT_SECRET=                          # 32+ chars, no fallback
+MIMO_API_KEY=
+DASHSCOPE_API_KEY=
+APP_SHARED_TOKEN=                    # Legacy, will be removed
+APPLE_CLIENT_ID=                     # Apple Sign-In audience
+ALIYUN_SMS_*                         # SMS credentials
+```
+
+Never hardcode keys. Never log them. Never commit `.env`. Never read `.env` files via tool calls — values land in conversation history and need rotation.
 
 ---
 
-## Implementation Order
+## Current State & Roadmap
 
-Build in this sequence — each phase is independently testable:
+The original three-phase build plan (Core Pipeline → Generate & Play → SRS + Stats) is largely **complete**. Auth was added later (Apple + phone). The system is in production with growing usage.
 
-**Phase 1 — Core Pipeline**
-1. Set up Expo project with file-based routing, bottom tabs
-2. SQLite schema + CRUD layer
-3. Photo picker (random + manual)
-4. Audio recording with expo-av
-5. Whisper transcription
-6. Claude analysis with structured JSON output
-7. Display results in chat-style UI
-8. Follow-up chat (multi-turn with Claude)
+**For new work**, consult [`docs/optimization.md`](docs/optimization.md) — it lists everything currently broken or insufficient for scale, in priority order. Don't add features without first checking whether the surrounding area has open 🔴 / 🟡 items.
 
-**Phase 2 — Generate & Play**
-9. ElevenLabs TTS per sentence, save to file system
-10. "Confirm Generate" flow → podcast + cards created
-11. Audio player with sentence highlight sync + single-sentence loop
-12. Speed control
-
-**Phase 3 — SRS + Stats**
-13. FSRS algorithm
-14. Daily card review UI
-15. Stats tracking (streak, listening time, card counts)
-16. Daily push notification for card review
+In-flight concerns to keep in mind (full list in roadmap):
+- 🔴 Legacy `APP_SHARED_TOKEN` still accepted on `/api/*` (S1)
+- 🔴 `/api/*` proxy has no input validation or body size limit (S2)
+- 🔴 No global error handler in Hono (S4)
+- 🔴 No rate limiting (S5)
+- 🟡 Synchronous proxy model — must move to async queue + LLM Gateway before serving 1000 concurrent users (P2 + P14)
 
 ---
 
 ## Key Decisions & Constraints
 
-- **Per-sentence audio files**: ElevenLabs generates one file per sentence. This makes single-sentence looping trivial — just replay the file. No timeline scrubbing needed.
-- **Confirm before TTS**: TTS runs only after user confirms. This avoids wasting API cost on sessions the user abandons mid-way.
-- **Fixed TTS voice**: Use one voice ID for all generations. Users calibrate to a single voice over time — better for learning.
-- **Offline-first storage**: All audio files and data live on device. Cloud sync is out of scope for now.
-- **No backend (early stage)**: API keys are in the client for now. Add a backend before public launch to avoid key exposure.
-- **Chat history**: Always send the full session chat history to Claude for follow-up questions. Claude has no memory between calls.
-- **Photo thumbnail**: Resize to ~200x200px before storing and before sending to Claude. Full-res photos are only used for display.
+- **Per-sentence audio files**: TTS generates one file per sentence. Single-sentence looping is just a replay — no timeline scrubbing.
+- **Confirm before TTS**: TTS runs only after user confirms, avoiding wasted API cost on abandoned sessions.
+- **Fixed TTS voice**: One voice ID across all generations. Users calibrate to a single voice over time.
+- **Offline-first storage**: All audio files and session/card data live on device. Cloud sync is a future decision (Q4).
+- **Backend is a thin proxy + auth**: Upstream API keys live server-side; the backend authenticates and forwards. The forward path is slated to grow into a proper LLM Gateway (P14).
+- **Chat history**: Always send the full session chat history + photo to MiMo for follow-up questions. The model has no memory between calls.
+- **Photo thumbnail**: Resize to ~200x200px before storing and before sending to MiMo. Full-res photos are only used for display.
+- **Storage paths are relative**: see invariant note above. Always resolve via `src/storage/resolve.ts`.
 
 ---
 
 ## Common Pitfalls to Avoid
 
-- Do not merge polished sentences into one string before TTS — keep them as an array
-- Do not call TTS during the analysis step — only after user confirms
-- Do not store audio files in the SQLite DB — store file paths only, files go in expo-file-system
-- Do not expose API keys in any log output
-- When calling Claude for follow-up chat, always include the original photo and the full message history
-- FSRS `next_review_at` must be stored as ISO string and queried correctly for daily due cards
+- Do not merge polished sentences into one string before TTS — keep them as an array.
+- Do not call TTS during the analysis step — only after user confirms.
+- Do not store audio files in SQLite — store relative paths only; bytes go in `expo-file-system`.
+- Do not write absolute file URIs into the DB — always relative to documentDirectory.
+- Do not expose API keys in any log output.
+- Do not add new `/api/*` endpoints by copying the existing passthrough pattern (see Backend Contract above) — add validation, prefer routing through the future LLM Gateway.
+- When calling MiMo for follow-up chat, always include the original photo and the full message history.
+- FSRS `next_review_at` must be stored as ISO string and queried correctly for daily-due cards.
+- Do not read `.env` files via tool calls — values land in conversation history and need rotation.
