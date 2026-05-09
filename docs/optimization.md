@@ -20,6 +20,7 @@
 |----|---------|------|
 | **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
 | **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
+| **S4** · 全局错误处理 | 2026-05-09 | Hono `onError` + 进程级 fatal handler；不 swallow，让 PM2 重启 |
 | **Q2** · `/api/*` 抽到 `routes/proxy.ts` | 2026-05-09 | 随 S2 一起做 |
 
 ---
@@ -103,12 +104,11 @@
 - **文件**：[backend/src/index.ts:44-51](../backend/src/index.ts#L44-L51)
 - **遗留**：将来上 Web 客户端（Q6）时，在原位置加 `cors({ origin: [...] })`，origin 限定到已备案前端域名——comment 已留好提示。
 
-### S4 · 全局错误处理
-- [ ] Hono 加 `app.onError()`
-- [ ] Node 进程加 `process.on('uncaughtException')` 和 `process.on('unhandledRejection')`
-- **文件**：[backend/src/index.ts](../backend/src/index.ts)（全文无相关 handler）
-- **问题**：上游 fetch 超时 / DNS 失败 / 任何未捕获异常会让进程崩溃。PM2 会重启，但当前正在处理的所有请求被切断；告警也看不到。
-- **修复方向**：`app.onError` 统一返回结构化 error JSON 并记日志（脱敏）；进程级 handler 只做记录，不要 swallow——让 PM2 重启，但日志要留下原因。
+### S4 · 全局错误处理 ✅（2026-05-09）
+- [x] `app.onError()` 处理路由异常：HTTPException 透传原 4xx，其他统一返回 generic 500 + 落结构化错误日志
+- [x] `process.on('uncaughtException')` 和 `process.on('unhandledRejection')` 都加了，记完日志后 `process.exit(1)` 让 PM2 重启
+- **文件**：[backend/src/index.ts:84-130](../backend/src/index.ts#L84-L130)
+- **设计选择**：进程级 handler 不 swallow——状态可能已脏，宁可让 PM2 拉起新进程，也不让一个坏请求拖垮后续所有请求。客户端永远看不到内部 stack（只看到 `{"error":"internal server error"}`），日志在服务端落 `event:"error"` / `event:"fatal"` 两种 JSON 行。
 
 ### S5 · 限流（关键端点全覆盖）
 - [ ] `/auth/send-code`：按手机号 + 按 IP 双限流

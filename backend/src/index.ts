@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { type AuthVars } from './auth/middleware.js';
 import { privacyHtml } from './legal.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -84,6 +85,57 @@ app.route(
     APP_SHARED_TOKEN: env.APP_SHARED_TOKEN,
   })
 );
+
+// Catch unhandled errors thrown from route handlers.
+// HTTPException (e.g. zValidator failures) keeps its original 4xx
+// response. Everything else is a real internal error — log a
+// structured line and return a generic 500 (don't leak internals).
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      event: 'error',
+      path: c.req.path,
+      method: c.req.method,
+      userId: c.get('userId') || '',
+      message: err.message,
+      stack: (err.stack || '').slice(0, 2000),
+    })
+  );
+  return c.json({ error: 'internal server error' }, 500);
+});
+
+// Process-level guards. We deliberately do NOT swallow these — the
+// process state may be corrupted, so we log and exit. PM2 restarts.
+process.on('uncaughtException', (err) => {
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      event: 'fatal',
+      kind: 'uncaughtException',
+      message: err.message,
+      stack: (err.stack || '').slice(0, 2000),
+    })
+  );
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : null;
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      event: 'fatal',
+      kind: 'unhandledRejection',
+      message: err ? err.message : String(reason),
+      stack: err ? (err.stack || '').slice(0, 2000) : '',
+    })
+  );
+  process.exit(1);
+});
 
 const port = Number(process.env.PORT ?? 3000);
 serve({ fetch: app.fetch, port });
