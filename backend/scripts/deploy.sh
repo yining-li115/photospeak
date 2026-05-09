@@ -79,15 +79,18 @@ rollback() {
   cd "$REPO_DIR"
   git reset --hard "$PREV_COMMIT"
   cd "$BACKEND_DIR"
-  npm install --omit=dev
+  npm install
   npm run build
   pm2 reload "$PM2_NAME" --update-env
   echo "✗ rolled back to $(git rev-parse --short HEAD); deploy aborted" >&2
   exit 1
 }
 
+# Install all deps (incl. devDependencies). `npm run build` needs tsc,
+# which is in devDependencies — so `--omit=dev` here would break the
+# build. devDeps are disk-only, no runtime cost.
 echo "  · npm install..."
-npm install --omit=dev || rollback "npm install failed"
+npm install || rollback "npm install failed"
 
 echo "  · npm run build..."
 npm run build || rollback "build failed"
