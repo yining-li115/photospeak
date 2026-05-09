@@ -2,9 +2,16 @@ import * as Sentry from '@sentry/react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import TrackPlayer from 'react-native-track-player';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { AuthProvider, useAuth } from '../src/context/auth';
 import { PlayerProvider } from '../src/context/player';
+import { playbackService } from '../src/services/playback-service';
+
+// Register the rntp background service at module load — must happen
+// before any TrackPlayer command is issued and outside any React
+// component tree (the service runs in a separate JS context).
+TrackPlayer.registerPlaybackService(() => playbackService);
 
 // Crash + error reporting. Only initializes when EXPO_PUBLIC_SENTRY_DSN
 // is set, so dev / pre-Sentry-account builds skip it cleanly. Init at
