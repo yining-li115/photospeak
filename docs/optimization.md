@@ -14,6 +14,13 @@
 
 跑完一项就把它从这表里挪走；新接手的项进来填上。
 
+## ✅ 已完成
+
+| 项 | 完成时间 | 备注 |
+|----|---------|------|
+| **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
+| **Q2** · `/api/*` 抽到 `routes/proxy.ts` | 2026-05-09 | 随 S2 一起做 |
+
 ---
 
 ## 目标架构总览
@@ -79,12 +86,16 @@
 - **问题**：`requireAuth(env.APP_SHARED_TOKEN)` 让 legacy token 等同 JWT。该 token 历史上通过 `EXPO_PUBLIC_API_TOKEN` 被打进过客户端 bundle，任何拿到旧版 IPA/APK 的人都能解包提取，绕过用户身份直刷代理端点。
 - **背景**：当前客户端 `backendRequest()` 已经只发 JWT，**不再 fallback** 到 legacy token，所以新装机的用户是干净的。仍在用 legacy 的全部是历史 build——Phase 2 就是去量化"还有多少历史 build 在跑"。
 
-### S2 · `/api/*` 代理加输入校验 + body 大小限制
-- [ ] `/api/transcribe`、`/api/analyze`、`/api/tts` 都加 zod schema 校验
-- [ ] 加 body size limit（建议 transcribe 上限 10MB，其他 100KB）
-- **文件**：[backend/src/index.ts:80-120](../backend/src/index.ts#L80-L120)
-- **问题**：三个端点是裸直通，把客户端 body 原样转发给上游。`/api/analyze` 和 `/api/tts` 实际都打 `${MIMO_BASE}/chat/completions`——意味着 tts 端点可被滥用为任意 chat 调用。任何 authed 用户都能刷上游配额。
-- **修复方向**：每个路由定义对应 zod schema（transcribe 校验 audio 引用 + 元数据；analyze 校验 messages 结构；tts 校验只允许 TTS 请求体），用 `@hono/zod-validator` 卡掉非法请求；body 限制走 Hono 的 `bodyLimit` middleware。
+### S2 · `/api/*` 代理加输入校验 + body 大小限制 ✅（2026-05-09）
+- [x] `/api/transcribe`、`/api/analyze`、`/api/tts` 都加 zod schema 校验
+- [x] 加 body size limit（transcribe 15MB，analyze 5MB，tts 64KB）
+- [x] 路由抽到 [backend/src/routes/proxy.ts](../backend/src/routes/proxy.ts)（顺手把 Q2 做了）
+- **文件**：[backend/src/routes/proxy.ts](../backend/src/routes/proxy.ts)、[backend/src/index.ts:73-82](../backend/src/index.ts#L73-L82)
+- **关键收紧点**：
+  - `model` 字段用 `z.literal()` 锁定为我们客户端实际发的值（`qwen3-asr-flash` / `mimo-v2.5` / `mimo-v2.5-tts`），堵掉"用我们的代理刷其他 MiMo / OpenAI 模型"的滥用面
+  - 未识别字段被 zod 默认行为静默丢弃（`stream`、`tools` 之类塞进来不会被转发到上游）
+  - 字符串 / 数组 / 数字都加了上界，配合 bodyLimit 形成两道闸
+- **遗留**：未来 P14 LLM Gateway 起来后，schema + 路由应迁过去，`fetch` 直接调用消失。
 
 ### S3 · CORS 收紧
 - [ ] `cors()` 改为白名单 origin，或干脆移除
@@ -302,10 +313,9 @@
 - **文件**：[backend/src/routes/auth.ts:36-125](../backend/src/routes/auth.ts#L36-L125)
 - **理由**：当前规则简单还能扛，路由一多就会漂移；S2 已经引入 zod 后，统一掉成本很低。
 
-### Q2 · `/api/*` 代理路由抽到 `routes/proxy.ts`
-- [ ] 从 `index.ts` 拆出
-- **文件**：[backend/src/index.ts:80-120](../backend/src/index.ts#L80-L120)
-- **理由**：和 `routes/auth.ts` 风格统一，`index.ts` 只做装配。
+### Q2 · `/api/*` 代理路由抽到 `routes/proxy.ts` ✅（2026-05-09）
+- [x] 从 `index.ts` 拆出，随 S2 一起做
+- **文件**：[backend/src/routes/proxy.ts](../backend/src/routes/proxy.ts)
 
 ### Q3 · 多环境分离
 - [ ] `.env.development` / `.env.staging` / `.env.production` 分别管理

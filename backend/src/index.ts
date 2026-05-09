@@ -2,12 +2,10 @@ import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createAuthRouter } from './routes/auth.js';
-import { requireAuth, type AuthVars } from './auth/middleware.js';
+import { type AuthVars } from './auth/middleware.js';
 import { privacyHtml } from './legal.js';
-
-const MIMO_BASE = 'https://api.xiaomimimo.com/v1';
-const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
+import { createAuthRouter } from './routes/auth.js';
+import { createProxyRouter } from './routes/proxy.js';
 
 interface Env {
   MIMO_API_KEY: string;
@@ -72,63 +70,16 @@ app.route(
   })
 );
 
-// /api/* — proxied calls to MiMo / DashScope. Accepts either a
-// per-user JWT or the legacy APP_SHARED_TOKEN bearer (until every
-// shipped mobile build has been replaced).
-app.use('/api/*', requireAuth(env.APP_SHARED_TOKEN));
-
-app.post('/api/transcribe', async (c) => {
-  const body = await c.req.text();
-  const upstream = await fetch(
-    `${DASHSCOPE_BASE}/services/aigc/multimodal-generation/generation`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.DASHSCOPE_API_KEY}`,
-      },
-      body,
-    }
-  );
-  return passthrough(upstream);
-});
-
-app.post('/api/analyze', async (c) => {
-  const body = await c.req.text();
-  const upstream = await fetch(`${MIMO_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': env.MIMO_API_KEY,
-    },
-    body,
-  });
-  return passthrough(upstream);
-});
-
-app.post('/api/tts', async (c) => {
-  const body = await c.req.text();
-  const upstream = await fetch(`${MIMO_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': env.MIMO_API_KEY,
-    },
-    body,
-  });
-  return passthrough(upstream);
-});
-
-async function passthrough(res: Response): Promise<Response> {
-  const text = await res.text();
-  return new Response(text, {
-    status: res.status,
-    headers: {
-      'Content-Type':
-        res.headers.get('Content-Type') ?? 'application/json',
-    },
-  });
-}
+// /api/* — proxied calls to MiMo / DashScope. Auth + body validation
+// + per-route size limits live inside the router (see routes/proxy.ts).
+app.route(
+  '/api',
+  createProxyRouter({
+    MIMO_API_KEY: env.MIMO_API_KEY,
+    DASHSCOPE_API_KEY: env.DASHSCOPE_API_KEY,
+    APP_SHARED_TOKEN: env.APP_SHARED_TOKEN,
+  })
+);
 
 const port = Number(process.env.PORT ?? 3000);
 serve({ fetch: app.fetch, port });
