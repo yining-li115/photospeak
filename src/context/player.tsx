@@ -15,6 +15,18 @@ import {
 } from 'react';
 import { addListeningSeconds } from '../db/stats';
 
+// Tagged logger for the play-through auto-advance path. Greppable
+// from Xcode console / Metro logs as `[player]`. Cheap to leave on
+// while we stabilize the audio session race; tighten or remove once
+// the issue stops surfacing in the wild.
+const plog = (event: string, data?: Record<string, unknown>) => {
+  if (data) {
+    console.log(`[player] ${event}`, JSON.stringify(data));
+  } else {
+    console.log(`[player] ${event}`);
+  }
+};
+
 export type PlaybackSpeed = 0.75 | 1 | 1.25;
 
 export interface Track {
@@ -126,6 +138,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const handleFinished = useCallback(() => {
     if (loopRef.current) return; // single-loop is handled by player.loop
     const next = indexRef.current + 1;
+    plog('finished', { next, queueLen: queueRef.current.length });
     if (next < queueRef.current.length) {
       // Defer the source swap. expo-audio's teardown of the just-
       // finished native player races with the new player's
@@ -134,6 +147,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       // on iOS 26 (the prior 120ms intermittently lost the auto-
       // advance in play-through mode).
       setTimeout(() => {
+        plog('swap', { to: next });
         setCurrentIndex(next);
         setAutoplayWanted(true);
       }, 250);
@@ -380,19 +394,32 @@ function AudioEngine({
   // didJustFinish swap). We only consume the flag after status.playing
   // has actually flipped to true — so if the first attempt fails, the
   // effect will retry on the next status change.
+  //
+  // Belt-and-suspenders: if status doesn't change after play() (silent
+  // failure with no signal), schedule a single retry 200ms later.
   useEffect(() => {
     if (!autoplay) return;
     if (!status.isLoaded) return;
     if (status.playing) {
-      // play() took effect — clear the flag.
+      plog('autoplay-consume');
       onAutoplayConsumed();
       return;
     }
+    plog('autoplay-call', { isLoaded: status.isLoaded });
     try {
       player.play();
-    } catch {
-      /* swallow */
+    } catch (e) {
+      plog('autoplay-call-throw', { msg: String(e) });
     }
+    const retry = setTimeout(() => {
+      plog('autoplay-retry');
+      try {
+        player.play();
+      } catch {
+        /* swallow */
+      }
+    }, 200);
+    return () => clearTimeout(retry);
   }, [autoplay, status.isLoaded, status.playing, player, onAutoplayConsumed]);
 
   // didJustFinish edge — Provider decides what to do next.
@@ -401,11 +428,33 @@ function AudioEngine({
   useEffect(() => {
     if (status.didJustFinish && !handledRef.current) {
       handledRef.current = true;
+      plog('didJustFinish');
       onFinished();
     } else if (!status.didJustFinish) {
       handledRef.current = false;
     }
   }, [status.didJustFinish, onFinished]);
+
+  // Trace status transitions so we can see whether the new player ever
+  // becomes loaded / playing for sentences that fail to advance.
+  const lastStatusRef = useRef<{ isLoaded: boolean; playing: boolean }>({
+    isLoaded: false,
+    playing: false,
+  });
+  useEffect(() => {
+    const prev = lastStatusRef.current;
+    if (prev.isLoaded !== status.isLoaded || prev.playing !== status.playing) {
+      plog('status', {
+        isLoaded: status.isLoaded,
+        playing: status.playing,
+        uri: uri.slice(-40),
+      });
+      lastStatusRef.current = {
+        isLoaded: status.isLoaded,
+        playing: status.playing,
+      };
+    }
+  }, [status.isLoaded, status.playing, uri]);
 
   return null;
 }
