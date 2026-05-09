@@ -21,6 +21,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import { requireAuth, type AuthVars } from '../auth/middleware.js';
+import { clientIp, rateLimit } from '../middleware/rate-limit.js';
 
 const MIMO_BASE = 'https://api.xiaomimimo.com/v1';
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
@@ -137,6 +138,23 @@ export function createProxyRouter(env: ProxyEnv) {
   const router = new Hono<{ Variables: AuthVars }>();
 
   router.use('*', requireAuth(env.APP_SHARED_TOKEN));
+
+  // Per-user (or per-IP for legacy shared-token clients) rate limit
+  // across all /api/* routes. 30/min covers normal usage with comfort
+  // margin (a real user generates < 5/min during an active session).
+  // Daily quotas / cost ceilings live in P16 once Redis is around.
+  router.use(
+    '*',
+    rateLimit({
+      name: 'api-user',
+      windowMs: 60_000,
+      max: 30,
+      keyFn: (c) => {
+        const userId = c.get('userId');
+        return userId ? `user:${userId}` : `ip:${clientIp(c)}`;
+      },
+    })
+  );
 
   router.post(
     '/transcribe',

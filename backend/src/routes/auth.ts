@@ -18,6 +18,15 @@ import {
   SmsThrottledError,
   SmsUnavailableError,
 } from '../auth/sms.js';
+import {
+  clientIp,
+  rateLimit,
+  rateLimitConsume,
+} from '../middleware/rate-limit.js';
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const MIN_15_MS = 15 * 60 * 1000;
 
 interface Config {
   /** iOS bundle id — Apple's identity token's `aud` claim. */
@@ -96,83 +105,142 @@ export function createAuthRouter(config: Config) {
   });
 
   // ─── POST /auth/send-code (phone) ─────────────────────────────────
-  app.post('/send-code', async (c) => {
-    if (!config.phoneLoginEnabled) {
-      return c.json({ error: '手机号登录暂未开放' }, 403);
-    }
-    let body: { phone?: string } = {};
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-    const phone = body.phone;
-    if (!phone || !PHONE_RE.test(phone)) {
-      return c.json({ error: '请输入有效的手机号' }, 400);
-    }
-    try {
-      await sendVerifyCode(phone);
-    } catch (err) {
-      if (err instanceof SmsThrottledError) {
-        return c.json({ error: '发送过于频繁，请稍后再试' }, 429);
+  // Two-layer rate limit:
+  //   - Per IP (middleware, cheap): blocks a single attacker enumerating
+  //     phone numbers. 20/hour is generous for real users on shared NAT.
+  //   - Per phone (handler, after body parse): caps SMS spend per number
+  //     even if the attacker rotates IPs. 5/day matches Aliyun's daily
+  //     SMS quota assumption.
+  app.post(
+    '/send-code',
+    rateLimit({
+      name: 'send-code-ip',
+      windowMs: HOUR_MS,
+      max: 20,
+      keyFn: (c) => `ip:${clientIp(c)}`,
+      message: '请求过于频繁，请稍后再试',
+    }),
+    async (c) => {
+      if (!config.phoneLoginEnabled) {
+        return c.json({ error: '手机号登录暂未开放' }, 403);
       }
-      if (err instanceof SmsUnavailableError) {
-        return c.json({ error: '验证码服务暂时不可用' }, 503);
+      let body: { phone?: string } = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: 'invalid JSON body' }, 400);
       }
-      throw err;
+      const phone = body.phone;
+      if (!phone || !PHONE_RE.test(phone)) {
+        return c.json({ error: '请输入有效的手机号' }, 400);
+      }
+
+      const phoneCheck = rateLimitConsume({
+        name: 'send-code-phone',
+        key: `phone:${phone}`,
+        windowMs: DAY_MS,
+        max: 5,
+      });
+      if (!phoneCheck.ok) {
+        c.header('Retry-After', String(phoneCheck.retryAfterSec));
+        return c.json(
+          { error: '该手机号今日发送次数已达上限，请明天再试' },
+          429
+        );
+      }
+
+      try {
+        await sendVerifyCode(phone);
+      } catch (err) {
+        if (err instanceof SmsThrottledError) {
+          return c.json({ error: '发送过于频繁，请稍后再试' }, 429);
+        }
+        if (err instanceof SmsUnavailableError) {
+          return c.json({ error: '验证码服务暂时不可用' }, 503);
+        }
+        throw err;
+      }
+      return c.json({ message: '验证码已发送' });
     }
-    return c.json({ message: '验证码已发送' });
-  });
+  );
 
   // ─── POST /auth/verify (phone) ────────────────────────────────────
-  app.post('/verify', async (c) => {
-    if (!config.phoneLoginEnabled) {
-      return c.json({ error: '手机号登录暂未开放' }, 403);
-    }
-    let body: { phone?: string; code?: string; nickname?: string } = {};
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-    const phone = body.phone;
-    const code = body.code;
-    if (!phone || !PHONE_RE.test(phone)) {
-      return c.json({ error: '手机号无效' }, 400);
-    }
-    if (!code || !CODE_RE.test(code)) {
-      return c.json({ error: '请输入 6 位验证码' }, 400);
-    }
+  // Two-layer limit again:
+  //   - Per IP: 30/15min — blocks broad brute-force from one attacker.
+  //   - Per phone: 10/15min — locks out brute-forcers cycling through IPs
+  //     against a specific number. After 10 wrong tries the user (or
+  //     attacker) waits 15 minutes.
+  app.post(
+    '/verify',
+    rateLimit({
+      name: 'verify-ip',
+      windowMs: MIN_15_MS,
+      max: 30,
+      keyFn: (c) => `ip:${clientIp(c)}`,
+    }),
+    async (c) => {
+      if (!config.phoneLoginEnabled) {
+        return c.json({ error: '手机号登录暂未开放' }, 403);
+      }
+      let body: { phone?: string; code?: string; nickname?: string } = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: 'invalid JSON body' }, 400);
+      }
+      const phone = body.phone;
+      const code = body.code;
+      if (!phone || !PHONE_RE.test(phone)) {
+        return c.json({ error: '手机号无效' }, 400);
+      }
+      if (!code || !CODE_RE.test(code)) {
+        return c.json({ error: '请输入 6 位验证码' }, 400);
+      }
 
-    let isValid: boolean;
-    try {
-      isValid = await checkVerifyCode(phone, code);
-    } catch {
-      return c.json({ error: '验证码服务暂时不可用' }, 503);
-    }
-    if (!isValid) {
-      return c.json({ error: '验证码错误或已过期' }, 401);
-    }
+      const phoneCheck = rateLimitConsume({
+        name: 'verify-phone',
+        key: `phone:${phone}`,
+        windowMs: MIN_15_MS,
+        max: 10,
+      });
+      if (!phoneCheck.ok) {
+        c.header('Retry-After', String(phoneCheck.retryAfterSec));
+        return c.json(
+          { error: '验证次数过多，请 15 分钟后再试' },
+          429
+        );
+      }
 
-    // Upsert user by phone (active rows only).
-    const [existing] = await db
-      .select()
-      .from(schema.users)
-      .where(and(eq(schema.users.phone, phone), isNull(schema.users.deletedAt)))
-      .limit(1);
+      let isValid: boolean;
+      try {
+        isValid = await checkVerifyCode(phone, code);
+      } catch {
+        return c.json({ error: '验证码服务暂时不可用' }, 503);
+      }
+      if (!isValid) {
+        return c.json({ error: '验证码错误或已过期' }, 401);
+      }
 
-    let user = existing;
-    if (!user) {
-      const nickname = body.nickname?.trim() || `用户${phone.slice(-4)}`;
-      const [created] = await db
-        .insert(schema.users)
-        .values({ phone, nickname })
-        .returning();
-      user = created;
+      // Upsert user by phone (active rows only).
+      const [existing] = await db
+        .select()
+        .from(schema.users)
+        .where(and(eq(schema.users.phone, phone), isNull(schema.users.deletedAt)))
+        .limit(1);
+
+      let user = existing;
+      if (!user) {
+        const nickname = body.nickname?.trim() || `用户${phone.slice(-4)}`;
+        const [created] = await db
+          .insert(schema.users)
+          .values({ phone, nickname })
+          .returning();
+        user = created;
+      }
+
+      return c.json(await issueSession(user));
     }
-
-    return c.json(await issueSession(user));
-  });
+  );
 
   // ─── POST /auth/refresh ───────────────────────────────────────────
   app.post('/refresh', async (c) => {

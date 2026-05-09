@@ -21,6 +21,7 @@
 | **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
 | **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
 | **S4** · 全局错误处理 | 2026-05-09 | Hono `onError` + 进程级 fatal handler；不 swallow，让 PM2 重启 |
+| **S5** · 限流（关键端点） | 2026-05-09 | 内存固定窗口；P2 Redis 落地后切换。每日配额留给 P16 |
 | **Q2** · `/api/*` 抽到 `routes/proxy.ts` | 2026-05-09 | 随 S2 一起做 |
 
 ---
@@ -110,14 +111,15 @@
 - **文件**：[backend/src/index.ts:84-130](../backend/src/index.ts#L84-L130)
 - **设计选择**：进程级 handler 不 swallow——状态可能已脏，宁可让 PM2 拉起新进程，也不让一个坏请求拖垮后续所有请求。客户端永远看不到内部 stack（只看到 `{"error":"internal server error"}`），日志在服务端落 `event:"error"` / `event:"fatal"` 两种 JSON 行。
 
-### S5 · 限流（关键端点全覆盖）
-- [ ] `/auth/send-code`：按手机号 + 按 IP 双限流
-- [ ] `/auth/verify`：失败次数限制 + 短时间锁定
-- [ ] `/api/*`：按 user 限流（每分钟、每天两档）
-- [ ] 全局：按 IP 兜底限流
-- **文件**：当前无限流中间件
-- **问题**：阿里云 SMS 自带 60s/号码节流，但攻击者可遍历手机号刷 SMS 余额；验证码爆破无锁定；`/api/*` 配合 S1+S2 是钱包定时炸弹。
-- **修复方向**：用 `hono-rate-limiter` + Redis 后端（接 Phase 2 引入的 Redis）。`/auth/send-code` 单号每天 5 次、单 IP 每小时 10 次；`/api/*` 每用户每分钟 20 次、每天上限按业务定。
+### S5 · 限流（关键端点全覆盖）✅（2026-05-09 部分完成）
+- [x] `/auth/send-code`：IP 20/h（middleware）+ 手机号 5/天（handler 内）
+- [x] `/auth/verify`：IP 30/15min + 手机号 10/15min
+- [x] `/api/*`：用户 30/min（legacy 客户端 fallback 到 IP 30/min）
+- [ ] 全局按 IP 兜底——未做。NAT 后大量真实用户共享 IP 时容易误伤，等有了真实流量数据再决定要不要上。
+- [ ] 每日配额（按 user 累计每天）——这是 P16 的工作，需要 Redis 落地后做
+- **文件**：[backend/src/middleware/rate-limit.ts](../backend/src/middleware/rate-limit.ts)、[backend/src/routes/auth.ts](../backend/src/routes/auth.ts)、[backend/src/routes/proxy.ts](../backend/src/routes/proxy.ts)
+- **实现说明**：内存固定窗口限流，单进程足够。多进程（P9 PM2 cluster）或多机（P11 SLB）部署后必须迁 Redis（P2）——`rate-limit.ts` 公共接口设计成只把 `stores` Map 换成 Redis 客户端就能切。
+- **遗留**：上面两个 `[ ]` 进了 P16 范围。
 
 ### S6 · ICP 备案完成后立刻切回 HTTPS
 - [ ] 后端切回 `https://api.dailyphotospeak.cn`
