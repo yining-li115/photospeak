@@ -140,17 +140,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const next = indexRef.current + 1;
     plog('finished', { next, queueLen: queueRef.current.length });
     if (next < queueRef.current.length) {
-      // Defer the source swap. expo-audio's teardown of the just-
-      // finished native player races with the new player's
-      // initialization on iOS — without this delay, the new player
-      // gets stuck at isLoaded=false. 250ms is a comfortable margin
-      // on iOS 26 (the prior 120ms intermittently lost the auto-
-      // advance in play-through mode).
-      setTimeout(() => {
-        plog('swap', { to: next });
-        setCurrentIndex(next);
-        setAutoplayWanted(true);
-      }, 250);
+      // We now reuse a single AudioPlayer instance + replace() to swap
+      // sources, so the previous teardown race is gone. The state
+      // update can be synchronous; no setTimeout dance.
+      plog('swap', { to: next });
+      setCurrentIndex(next);
+      setAutoplayWanted(true);
     } else {
       // End of queue. Park the flag so togglePlay can restart cleanly.
       finishedRef.current = true;
@@ -313,11 +308,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     <PlayerContext.Provider value={value}>
       {currentUri && (
         <AudioEngine
-          // key forces a fresh useAudioPlayer instance whenever the source
-          // URI changes. Critical: the hook MUST be created with a valid
-          // string source — passing null and relying on .replace() leaves
-          // the native player stuck at isLoaded=false on iOS.
-          key={currentUri}
+          // No `key` — we deliberately keep the same useAudioPlayer
+          // instance for the lifetime of the queue and call
+          // player.replace() to swap sources. Recreating the native
+          // player on every sentence boundary races with expo-audio's
+          // teardown on iOS 26 and gets stuck at isLoaded=false.
           uri={currentUri}
           autoplay={autoplayWanted}
           loop={loopSingle}
@@ -354,9 +349,28 @@ function AudioEngine({
   onFinished,
   onAutoplayConsumed,
 }: AudioEngineProps) {
-  // Constructed with a real URI — the native player initializes correctly.
-  const player = useAudioPlayer(uri);
+  // Pin useAudioPlayer's source to the FIRST uri ever passed in. We
+  // ignore subsequent uri prop changes here on purpose — the native
+  // player is reused, with `player.replace()` (below) swapping the
+  // source. This avoids the iOS 26 teardown/init race that getting a
+  // fresh useAudioPlayer per sentence triggers.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const initialUri = useMemo(() => uri, []);
+  const player = useAudioPlayer(initialUri);
   const status = useAudioPlayerStatus(player);
+
+  // Source swap on uri prop change — single shared player, no remount.
+  const currentSourceRef = useRef(initialUri);
+  useEffect(() => {
+    if (uri === currentSourceRef.current) return;
+    currentSourceRef.current = uri;
+    plog('replace', { uri: uri.slice(-40) });
+    try {
+      player.replace(uri);
+    } catch (e) {
+      plog('replace-throw', { msg: String(e) });
+    }
+  }, [uri, player]);
 
   // Publish/withdraw the imperative handle.
   useEffect(() => {
@@ -369,14 +383,15 @@ function AudioEngine({
     onStatus({ playing: status.playing, isLoaded: status.isLoaded });
   }, [status.playing, status.isLoaded, onStatus]);
 
-  // Re-apply loop + speed; these don't survive player recreation.
+  // Re-apply loop + speed on every source swap — replace() resets
+  // these on the native player. `uri` in the deps does that.
   useEffect(() => {
     try {
       player.loop = loop;
     } catch {
       /* swallow */
     }
-  }, [player, loop]);
+  }, [player, loop, uri]);
 
   useEffect(() => {
     try {
@@ -384,7 +399,7 @@ function AudioEngine({
     } catch {
       /* swallow */
     }
-  }, [player, speed]);
+  }, [player, speed, uri]);
 
   // Autoplay once the new source is loaded.
   //
