@@ -10,14 +10,23 @@ import DypnsapiPkg, {
 import { Config } from '@alicloud/openapi-client';
 import { RuntimeOptions } from '@alicloud/tea-util';
 
-// CJS-from-ESM interop: the dypnsapi package's default export is the
-// client class, but Node's ESM-importing-CJS flow gives us the
-// `module.exports` namespace object instead (with the class on
-// `.default`). TypeScript's types lie about this, so unwrap manually.
-type DypnsapiClient = InstanceType<typeof DypnsapiPkg>;
+// CJS-from-ESM interop. The dypnsapi package's actual class can be at
+// the top level, on `.default`, or (since some recent v2 builds) on
+// `.default.default`. Walk down the `default` chain until we find a
+// function — that's the class.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const DypnsapiCtor: typeof DypnsapiPkg =
-  (DypnsapiPkg as any)?.default ?? DypnsapiPkg;
+function resolveDypnsapiCtor(pkg: any): any {
+  let cur = pkg;
+  for (let i = 0; i < 4 && cur; i++) {
+    if (typeof cur === 'function') return cur;
+    if (cur.default === undefined) break;
+    cur = cur.default;
+  }
+  return cur;
+}
+
+type DypnsapiClient = InstanceType<typeof DypnsapiPkg>;
+const DypnsapiCtor = resolveDypnsapiCtor(DypnsapiPkg) as typeof DypnsapiPkg;
 
 let cachedClient: DypnsapiClient | null = null;
 
@@ -29,6 +38,28 @@ function getClient(): DypnsapiClient {
     throw new Error(
       'ALIBABA_CLOUD_ACCESS_KEY_ID / ALIBABA_CLOUD_ACCESS_KEY_SECRET are required for SMS'
     );
+  }
+  // If the unwrap above failed (package structure changed yet again),
+  // dump enough of the export shape to identify where the class moved.
+  if (typeof DypnsapiCtor !== 'function') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pkg = DypnsapiPkg as any;
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'sms-ctor-resolve-failed',
+        topLevelType: typeof pkg,
+        topLevelKeys:
+          pkg && typeof pkg === 'object' ? Object.keys(pkg).slice(0, 20) : [],
+        defaultType: typeof pkg?.default,
+        defaultKeys:
+          pkg?.default && typeof pkg.default === 'object'
+            ? Object.keys(pkg.default).slice(0, 20)
+            : [],
+        defaultDefaultType: typeof pkg?.default?.default,
+      })
+    );
+    throw new Error('Failed to resolve Dypnsapi class — see logs');
   }
   const config = new Config({ accessKeyId: id, accessKeySecret: secret });
   config.endpoint = 'dypnsapi.aliyuncs.com';
