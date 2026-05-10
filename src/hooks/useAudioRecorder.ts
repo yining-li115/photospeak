@@ -61,7 +61,15 @@ export function useRecorder(): UseRecorder {
     // iOS AVAudioRecorder needs a moment to flush the m4a footer to disk
     // before the file is readable. Without this, base64() can return ''.
     await new Promise((r) => setTimeout(r, 150));
-    await setAudioModeAsync({ allowsRecording: false });
+    // playsInSilentMode must be repeated here: expo-audio's
+    // setAudioModeAsync doesn't merge — omitted fields are filled
+    // from Swift struct defaults (playsInSilentMode: false). Without
+    // this, recording once flips the AVAudioSession to .ambient and
+    // all subsequent TTS playback respects the mute switch.
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+    });
     return recorder.uri;
   }, [recorder]);
 
