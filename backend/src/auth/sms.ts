@@ -102,6 +102,23 @@ export async function sendVerifyCode(phoneNumber: string): Promise<{
     duplicatePolicy: 1,
   });
 
+  // Log what methods the resolved client actually has — if v2 of the
+  // SDK renamed sendSmsVerifyCodeWithOptions, this surfaces the new
+  // name without another guess-and-deploy round-trip.
+  if (typeof (client as unknown as { sendSmsVerifyCodeWithOptions?: unknown })
+    .sendSmsVerifyCodeWithOptions !== 'function') {
+    const proto = Object.getPrototypeOf(client) ?? {};
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'sms-client-method-missing',
+        clientCtorName: client?.constructor?.name ?? 'unknown',
+        ownKeys: Object.keys(client as object).slice(0, 30),
+        protoKeys: Object.getOwnPropertyNames(proto).slice(0, 50),
+      })
+    );
+  }
+
   let resp;
   try {
     resp = await client.sendSmsVerifyCodeWithOptions(
@@ -110,6 +127,19 @@ export async function sendVerifyCode(phoneNumber: string): Promise<{
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'sms-upstream-error',
+        phase: 'send',
+        errName: err instanceof Error ? err.name : typeof err,
+        msg: msg.slice(0, 500),
+        stack:
+          err instanceof Error
+            ? (err.stack ?? '').split('\n').slice(0, 5).join(' | ')
+            : '',
+      })
+    );
     if (/INTERVAL|FREQUENCY|BUSINESS_LIMIT/i.test(msg)) {
       throw new SmsThrottledError();
     }
@@ -118,6 +148,15 @@ export async function sendVerifyCode(phoneNumber: string): Promise<{
 
   if (!resp?.body || resp.body.code !== 'OK') {
     const code = resp?.body?.code ?? 'unknown';
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'sms-upstream-non-ok',
+        phase: 'send',
+        code,
+        message: resp?.body?.message ?? '',
+      })
+    );
     if (/INTERVAL|FREQUENCY|BUSINESS_LIMIT/i.test(code)) {
       throw new SmsThrottledError();
     }
