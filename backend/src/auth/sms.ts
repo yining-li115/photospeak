@@ -148,6 +148,10 @@ export async function sendVerifyCode(phoneNumber: string): Promise<{
 
   if (!resp?.body || resp.body.code !== 'OK') {
     const code = resp?.body?.code ?? 'unknown';
+    // Dump everything we can about the response shape + the env vars
+    // we depend on. "UNKNOWN" / "UNKNOWN" out of dypnsapi v2 has shown
+    // up in the wild and is hard to diagnose without seeing both the
+    // raw response and which sign/template were sent in.
     console.error(
       JSON.stringify({
         ts: new Date().toISOString(),
@@ -155,6 +159,37 @@ export async function sendVerifyCode(phoneNumber: string): Promise<{
         phase: 'send',
         code,
         message: resp?.body?.message ?? '',
+        respKeys: resp ? Object.keys(resp).slice(0, 20) : [],
+        bodyKeys:
+          resp?.body && typeof resp.body === 'object'
+            ? Object.keys(resp.body).slice(0, 20)
+            : [],
+        // Stringify with a length cap so we can see body shape but not
+        // accidentally leak megabytes if the SDK packs raw HTTP into it.
+        bodyJson: (() => {
+          try {
+            const s = JSON.stringify(resp?.body);
+            return s.length > 1500 ? s.slice(0, 1500) + '…' : s;
+          } catch {
+            return '<unserializable>';
+          }
+        })(),
+        statusCode:
+          (resp as unknown as { statusCode?: number })?.statusCode ?? null,
+        headers:
+          (resp as unknown as { headers?: Record<string, unknown> })?.headers
+            ? Object.keys(
+                (resp as unknown as { headers: Record<string, unknown> }).headers
+              ).slice(0, 20)
+            : [],
+        // Env presence (truthy/falsy only — never log values).
+        envPresent: {
+          ALIBABA_CLOUD_ACCESS_KEY_ID: !!process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+          ALIBABA_CLOUD_ACCESS_KEY_SECRET:
+            !!process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+          ALIYUN_SMS_SIGN_NAME: !!process.env.ALIYUN_SMS_SIGN_NAME,
+          ALIYUN_SMS_TEMPLATE_CODE: !!process.env.ALIYUN_SMS_TEMPLATE_CODE,
+        },
       })
     );
     if (/INTERVAL|FREQUENCY|BUSINESS_LIMIT/i.test(code)) {
