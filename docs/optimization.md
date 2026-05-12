@@ -14,6 +14,17 @@
 
 跑完一项就把它从这表里挪走；新接手的项进来填上。
 
+## 📋 下次 sprint（已选）
+
+下个开发批次决定要做的两项，对应用户感知最强的"慢"问题：
+
+| 项 | 解决什么 | 预期收益 |
+|----|---------|---------|
+| **P26** · TTS 并行生成 | confirm-generate 步骤现在 N 句话顺序调 N 次 TTS，10–30s | 并行后 → 2–4s（≈ 单次 TTS 时间），用户感知瞬间出结果 |
+| **P18**（analyze SSE 子项）| analyze 现在 buffer-and-return，3-5s 空白屏 | SSE 流式 → 500ms 看到首字，体感秒回 |
+
+两项独立，但建议**分两次发**：先 P26（改动小、风险低）→ 用 Sentry 看一周 429 分布 → 再 P18（涉及客户端流式 JSON 解析，需要更仔细）。开始前先 MiMo 控制台确认 QPM 配额或跑探测脚本。
+
 ## ✅ 已完成
 
 | 项 | 完成时间 | 备注 |
@@ -253,6 +264,19 @@
   - 这件事**要做就做对**：音频 source of truth 在云端，本地是有上限的缓存。这是行业标配（每日英语听力、Apple Podcasts、Spotify、网易云）的做法。
 - **依赖图**：P3（OSS 上传基础设施）+ P4（TTS 缓存到 OSS）+ P12（OSS + CDN 出口）→ 三件都到位后这件事才能优雅落地。所以 P24 进 Phase 4 末段，等前置就绪后一起做。
 
+### P26 · TTS 并行生成 + 退避重试 ⭐ 下次 sprint
+- [ ] [src/services/generate.ts](../src/services/generate.ts) 串行 `for` 循环改成 `Promise.allSettled` + `p-limit` 单用户并发上限（起步 3，看 Sentry 调）
+- [ ] 单次 TTS 失败时 `Promise.allSettled` 不 abort 其他句子；只对失败的句子重试
+- [ ] 429（rate limit）自动指数退避重试 3 次（500ms → 1s → 2s），3 次还不过才向用户报错
+- [ ] Sentry tag：`area:session.generate.tts` + `stage:rate-limit / network / unknown`，按 stage 切片看分布
+- **问题**：当前 N 句话顺序调 N 次 TTS，总时间 ≈ N × 单次延迟 = 10–30s。用户点 confirm 之后干等的最大头
+- **预期收益**：N 句话 → 并行后总时间 ≈ 单次 TTS（2-4s），**3-5 倍提速**
+- **风险点**：并发打满 MiMo 单 key 的 QPM
+  - 20 用户峰值同时 generate × 6-8 句 = 瞬时 ~50 QPS，可能撞默认 60 QPM
+  - 防御：单用户并发上限 + 429 退避；起步 `pLimit(3)` 保守，看 Sentry 一周决定要不要调到 5-6
+  - 撞了的话同时推 [P13](#p13--上游并发配额谈判)（找 MiMo 提配额）
+- **跟 P18 的关系**：P18（流式 analyze）解决 analyze 那段卡顿，P26 解决 generate 那段，两个独立。两个都做完，用户从 transcribe → analyze → generate 整条线没有任何"卡死"体感
+
 ### P13 · 上游并发配额谈判
 - [ ] 联系 MiMo / DashScope 提升并发 quota
 - [ ] 评估是否需要多 key 分片（不同 user 落到不同 key）
@@ -291,13 +315,14 @@
 - **问题**：现在没有定时任务承载层，未来推送提醒、定期清理、发送 weekly summary 邮件都没地方落。
 - **修复方向**：和 AI worker 共用 Redis + BullMQ，但 queue 名分开，便于独立扩缩容。
 
-### P18 · 流式输出（SSE）
-- [ ] AI Service 关键回复路径改 SSE（chat 跟进、analyze 流式输出）
-- [ ] 客户端用 `react-native-sse` 接流
-- [ ] TTS 走 ElevenLabs / MiMo 流式接口（产生即播）
-- **依赖**：P14 LLM Gateway 接口设计需要预留 stream 模式
-- **问题**：当前是 buffer-and-return，3 秒响应 = 3 秒空白屏；流式同样 3 秒首字节但用户体感秒回。这是现代 AI 产品的 UX 默认值。
-- **修复方向**：分两步：先 SSE 文本流（chat 接口），再 audio 流式合成（更复杂，可延后）。
+### P18 · 流式输出（SSE）⭐ 下次 sprint
+- [ ] **analyze 路径 SSE 化**（**优先做**）：后端 `/api/analyze` 把上游 MiMo 的 chunked / SSE 响应透传给客户端；客户端用 `react-native-sse` 边接边渲染
+- [ ] chat 跟进同样改成 SSE（同一套基础设施）
+- [ ] TTS 走 MiMo / ElevenLabs 流式接口（产生即播）—— **延后**，先做 P26 并行更划算
+- **依赖**：理论上等 P14 LLM Gateway 抽出来更干净，但 analyze 一条线可以直接改不必等
+- **问题**：当前是 buffer-and-return，3-5 秒响应 = 3-5 秒空白屏。用户当下"卡住"体感的另一半（generate 那一半归 P26）
+- **修复方向**：分两步走——先 analyze SSE 文本流（这次 sprint），再 audio 流式合成（更复杂，可延后到 P14 之后）
+- **客户端边界**：MiMo 的流式 chunk 是部分 JSON，需要容错解析（chunk 边界可能切在 JSON 中间）。可参考 `eventsource-parser` 或自己写一个小 buffer-and-decode
 
 ### P19 · 成本作为一等指标
 - [ ] LLM Gateway 每次调用落库 `(user_id, request_id, model, input_tokens, output_tokens, cost_cents)`
