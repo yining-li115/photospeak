@@ -33,6 +33,7 @@
  * builds with `EXPO_PUBLIC_STT_PROVIDER=aliyun-qwen` (the default)
  * fail loudly via the transcript rejection if streaming breaks.
  */
+import * as Sentry from '@sentry/react-native';
 import {
   AudioStudioModule,
   useAudioRecorder as useAudioStudioRecorder,
@@ -137,6 +138,9 @@ export function useRecorder(): UseRecorder {
           return true;
         } catch (e) {
           console.warn('[recorder] failed to start recording', e);
+          Sentry.captureException(e, {
+            tags: { area: 'recorder.start', provider: 'whisper' },
+          });
           return false;
         }
       }
@@ -173,6 +177,12 @@ export function useRecorder(): UseRecorder {
         .catch((e) => {
           sessionFailed = true;
           console.warn('[recorder] failed to open transcription session', e);
+          Sentry.captureException(e, {
+            tags: {
+              area: 'recorder.session.create',
+              stage: e instanceof AliyunAsrError ? (e.stage ?? 'unknown') : 'unknown',
+            },
+          });
         });
 
       try {
@@ -203,6 +213,9 @@ export function useRecorder(): UseRecorder {
         });
       } catch (e) {
         console.warn('[recorder] failed to start recording', e);
+        Sentry.captureException(e, {
+          tags: { area: 'recorder.start', provider: 'aliyun-qwen' },
+        });
         sessionFailed = true;
         // If the session opens after we've bailed, the .then above
         // closes it. If it opened first, sessionRef.current already
@@ -232,6 +245,7 @@ export function useRecorder(): UseRecorder {
       fileUri = result.fileUri ?? null;
     } catch (e) {
       console.warn('[recorder] stopRecording failed', e);
+      Sentry.captureException(e, { tags: { area: 'recorder.stop' } });
       // Still try to finalise the transcript — we sent audio frames
       // already and the user shouldn't lose their session just
       // because the file flush errored.
@@ -257,14 +271,15 @@ export function useRecorder(): UseRecorder {
       // right away; the transcript resolves in the background and is
       // ready by the time the user taps the transcribe button.
       transcriptPromiseRef.current = session.finish().catch((err) => {
+        const stage = err instanceof AliyunAsrError ? (err.stage ?? 'unknown') : 'unknown';
         if (err instanceof AliyunAsrError) {
-          console.warn(
-            `[recorder] transcription failed (${err.stage ?? 'unknown'})`,
-            err.message
-          );
+          console.warn(`[recorder] transcription failed (${stage})`, err.message);
         } else {
           console.warn('[recorder] transcription failed', err);
         }
+        Sentry.captureException(err, {
+          tags: { area: 'recorder.transcript', stage },
+        });
         throw err;
       });
     } else {

@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
+import * as Sentry from '@sentry/react-native';
 import { friendlyTranscribeMessage } from '../../../src/api/aliyun-asr';
 import {
   analyzeSession,
@@ -133,6 +134,7 @@ export default function SessionDetailScreen() {
       setChatMessages([]);
     } catch (e) {
       console.warn('[handlePick] error', e);
+      Sentry.captureException(e, { tags: { area: 'session.pick' } });
       Alert.alert('照片打不开', '换一张照片试试');
     } finally {
       setPicking(false);
@@ -150,6 +152,7 @@ export default function SessionDetailScreen() {
         setRecording({ uri: persistedUri, durationMs: ms });
       } catch (e) {
         console.warn('[handleToggleRecord] stop error', e);
+        Sentry.captureException(e, { tags: { area: 'session.recording.save' } });
         Alert.alert('保存录音失败', '重新录一次试试');
       } finally {
         setSavingRecording(false);
@@ -185,6 +188,11 @@ export default function SessionDetailScreen() {
       // Keep technical detail in logs; show the user a short,
       // actionable Chinese message keyed off the failure stage.
       console.warn('[handleTranscribe] error', e);
+      // The recorder hook may have already captured this when the
+      // upstream task-failed event arrived; Sentry de-dupes by
+      // fingerprint so reporting here too is safe and gives us the
+      // "user tapped Transcribe and saw an alert" data point.
+      Sentry.captureException(e, { tags: { area: 'session.transcribe' } });
       Alert.alert('识别失败', friendlyTranscribeMessage(e));
     } finally {
       setTranscribing(false);
@@ -203,6 +211,7 @@ export default function SessionDetailScreen() {
       setAnalysis(result);
     } catch (e) {
       console.warn('[handleAnalyze] error', e);
+      Sentry.captureException(e, { tags: { area: 'session.analyze', mode } });
       Alert.alert('分析失败', '网络不太稳，请稍后再试');
     } finally {
       setAnalyzing(false);
@@ -246,6 +255,7 @@ export default function SessionDetailScreen() {
       });
     } catch (e) {
       console.warn('[handleSendChat] error', e);
+      Sentry.captureException(e, { tags: { area: 'session.chat' } });
       Alert.alert('回复失败', '网络不太稳，请稍后再试');
       setChatMessages((prev) => prev.slice(0, -1));
     } finally {
