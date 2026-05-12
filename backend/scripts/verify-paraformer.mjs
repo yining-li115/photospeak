@@ -15,6 +15,10 @@
  */
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+// Node 20 has no global WebSocket (added in 22). Use the `ws` package
+// which works across all Node versions. Install with:
+//   npm install --save-dev ws
+import { WebSocket } from 'ws';
 
 const KEY = process.env.DASHSCOPE_API_KEY;
 if (!KEY) {
