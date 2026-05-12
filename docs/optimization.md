@@ -229,7 +229,16 @@
 - **问题**：后端流音频会占带宽和 CPU。
 - **修复方向**：后端只签 URL，不参与音频字节传输。配合 P3、P4 自然成形。
 
-### P24 · 客户端音频存储治理（云优先 + LRU 缓存）
+### P25 · iOS 切后台导致 analyze / generate 失败（已知用户可见问题）
+- [ ] **短期**：在 [handleAnalyze](../app/(tabs)/sessions/[id].tsx) 和 [handleConfirmGenerate](../app/(tabs)/sessions/[id].tsx) 触发后显示阻断性 loading + "处理中，请勿切走 app" 提示；失败后回前台自动重试一次
+- [ ] **长期**：等 P2 异步化落地后从根本解决——任务跑在后端 worker，客户端拿 `job_id` 轮询 / SSE，切后台甚至 kill app 都不影响（ChatGPT 切后台回来还能看完整回复就是这套）
+- **现象**：
+  - `analyze`：1 次 `/api/analyze` fetch，2-5s。用户切后台时请求在飞 → iOS 挂起 JS context → promise 永远不 resolve → 用户回前台看到失败
+  - `generate`：循环调 N 次 TTS，整个流程 30s+。100% 会撞上 iOS 后台挂起阈值
+- **根因**：iOS 把 backgrounded app 的 JS 引擎在大约 5-30s 内挂起，所有 in-flight `fetch` / `setTimeout` / promise 全部冻结。`UIBackgroundModes: ["audio"]` **只允许音频会话继续**，对 JS 任务无效——这是常见误解
+- **不做的折中**：
+  - `expo-background-task` / iOS `beginBackgroundTask` 申请额外 30s——只够 analyze，generate 还是会挂；且是创可贴方案，P2 上线后立刻被淘汰
+- **优先级**：短期警告 1 小时改完，纳入下次发布；长期跟 P2 一起做（Phase 3）。这个问题是 P2 当前最强的用户侧动机——比"扛 1000 并发"更直接
 - [ ] TTS 音频后端生成时直接上 OSS（**依赖 P4**——TTS 缓存的 OSS 是同一份存储）
 - [ ] 客户端拿 OSS 签名 URL 流式播放，本地不再永久持有（**依赖 P12** OSS + CDN 出口）
 - [ ] 本地改成 LRU 缓存，上限 200-500MB；满了淘汰最久没播的 session 的 TTS 文件
