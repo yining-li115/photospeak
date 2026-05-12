@@ -132,7 +132,8 @@ export default function SessionDetailScreen() {
       setAnalysis(null);
       setChatMessages([]);
     } catch (e) {
-      Alert.alert('Could not load photo', String(e));
+      console.warn('[handlePick] error', e);
+      Alert.alert('照片打不开', '换一张照片试试');
     } finally {
       setPicking(false);
     }
@@ -148,7 +149,8 @@ export default function SessionDetailScreen() {
         const persistedUri = persistRecording(tmpUri, id);
         setRecording({ uri: persistedUri, durationMs: ms });
       } catch (e) {
-        Alert.alert('Could not save recording', String(e));
+        console.warn('[handleToggleRecord] stop error', e);
+        Alert.alert('保存录音失败', '重新录一次试试');
       } finally {
         setSavingRecording(false);
       }
@@ -200,7 +202,8 @@ export default function SessionDetailScreen() {
       });
       setAnalysis(result);
     } catch (e) {
-      Alert.alert('Analysis failed', e instanceof Error ? e.message : String(e));
+      console.warn('[handleAnalyze] error', e);
+      Alert.alert('分析失败', '网络不太稳，请稍后再试');
     } finally {
       setAnalyzing(false);
     }
@@ -242,7 +245,8 @@ export default function SessionDetailScreen() {
         return next;
       });
     } catch (e) {
-      Alert.alert('Reply failed', e instanceof Error ? e.message : String(e));
+      console.warn('[handleSendChat] error', e);
+      Alert.alert('回复失败', '网络不太稳，请稍后再试');
       setChatMessages((prev) => prev.slice(0, -1));
     } finally {
       setChatPending(false);
