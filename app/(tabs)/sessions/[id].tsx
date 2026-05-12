@@ -22,7 +22,6 @@ import {
   followUpChat,
   type AnalysisResult,
 } from '../../../src/api/mimo';
-import { transcribeAudio } from '../../../src/api/stt';
 import { Card } from '../../../src/components/Card';
 import {
   generateSession,
@@ -167,7 +166,10 @@ export default function SessionDetailScreen() {
     if (!recording) return;
     setTranscribing(true);
     try {
-      const t = await transcribeAudio(recording.uri);
+      // Streaming STT is already in flight from the moment stop()
+      // was called — this just awaits whatever's left of the
+      // finalisation round-trip. Typical wait: < 500ms.
+      const t = await recorder.getTranscript();
       if (t.length === 0) {
         Alert.alert(
           '没听清',

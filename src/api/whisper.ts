@@ -1,17 +1,22 @@
 /**
  * Local-only Whisper client (dev convenience).
  *
- * Production STT goes through the backend's `/api/transcribe` proxy
- * to DashScope; see `aliyun-asr.ts`. This file is dev-only — it
+ * Production STT streams PCM directly from the client to DashScope
+ * paraformer-realtime-v2 over WebSocket — see `aliyun-asr.ts` and
+ * `src/hooks/useAudioRecorder.ts`. This file is dev-only: it
  * speaks to a Whisper-compatible HTTP endpoint set via
- * `EXPO_PUBLIC_WHISPER_ENDPOINT` (typically `scripts/local_whisper_server.py`
- * on the developer's Mac). The previous fallback to OpenAI's cloud
- * (with `EXPO_PUBLIC_OPENAI_API_KEY` baked into the bundle) was
- * removed in P10 — that key would have shipped inside every IPA/APK.
+ * `EXPO_PUBLIC_WHISPER_ENDPOINT` (typically
+ * `scripts/local_whisper_server.py` on the developer's Mac).
  *
- * Anyone running on a real device or shipping to TestFlight should
- * keep `EXPO_PUBLIC_STT_PROVIDER` unset (or set it to `aliyun-qwen`)
- * so this file is never reached.
+ * In the dev path the recorder just writes a WAV file to disk and
+ * then this module POSTs that file batch-style after recording
+ * stops — no streaming. The previous fallback to OpenAI's cloud
+ * (with `EXPO_PUBLIC_OPENAI_API_KEY` baked into the bundle) was
+ * removed in P10.
+ *
+ * Anyone shipping to TestFlight should leave
+ * `EXPO_PUBLIC_STT_PROVIDER` unset (or set it to `aliyun-qwen`) so
+ * this file is never reached.
  */
 const MODEL = 'whisper-1';
 

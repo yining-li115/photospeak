@@ -6,6 +6,7 @@ import { type AuthVars } from './auth/middleware.js';
 import { privacyHtml } from './legal.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createProxyRouter } from './routes/proxy.js';
+import { createTranscribeRouter } from './routes/transcribe.js';
 
 interface Env {
   MIMO_API_KEY: string;
@@ -75,13 +76,25 @@ app.route(
   })
 );
 
-// /api/* — proxied calls to MiMo / DashScope. Auth + body validation
-// + per-route size limits live inside the router (see routes/proxy.ts).
+// /api/transcribe/* — STT token issuance. Mounted before the broader
+// /api/* router so its stricter `requireUser` gate (no legacy
+// shared-token fallback) takes precedence. Audio bytes never reach
+// this process; the client opens a WebSocket directly to DashScope
+// using the short-lived token returned here.
+app.route(
+  '/api/transcribe',
+  createTranscribeRouter({
+    DASHSCOPE_API_KEY: env.DASHSCOPE_API_KEY,
+  })
+);
+
+// /api/* — proxied calls to MiMo (analyze + tts). Auth + body
+// validation + per-route size limits live inside the router (see
+// routes/proxy.ts).
 app.route(
   '/api',
   createProxyRouter({
     MIMO_API_KEY: env.MIMO_API_KEY,
-    DASHSCOPE_API_KEY: env.DASHSCOPE_API_KEY,
     APP_SHARED_TOKEN: env.APP_SHARED_TOKEN,
   })
 );

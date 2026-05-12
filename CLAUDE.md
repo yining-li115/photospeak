@@ -23,10 +23,10 @@ The goal is a seamless, zero-friction daily learning loop.
 | Layer | Choice | Notes |
 |-------|--------|-------|
 | Mobile framework | React Native + Expo | iOS + Android, one codebase |
-| Audio recording | expo-av | Cross-platform |
+| Audio recording | `@siteed/audio-studio` | Records to WAV file on disk AND tees PCM frames to the streaming STT WebSocket — both at once, see [src/hooks/useAudioRecorder.ts](src/hooks/useAudioRecorder.ts). |
 | Photo library access | expo-image-picker | Cross-platform |
 | Pipeline orchestration | Plain async/await in `src/services/generate.ts` | No framework — linear flow, easy to debug |
-| STT | Aliyun DashScope ASR (Qwen) **or** OpenAI Whisper (fallback) | Switchable via `EXPO_PUBLIC_STT_PROVIDER`. DashScope is the production path. |
+| STT | Aliyun DashScope `paraformer-realtime-v2` (streaming WebSocket) **or** local Whisper (dev only) | Switchable via `EXPO_PUBLIC_STT_PROVIDER`. Client connects directly to DashScope using a short-lived token signed by `POST /api/transcribe/token`; audio bytes never transit the backend. |
 | LLM analysis | MiMo (`api.xiaomimimo.com/v1/chat/completions`) | Vision + language, structured JSON output |
 | TTS | MiMo TTS (same chat/completions endpoint, audio response) | Per-sentence, returns base64 |
 | SRS algorithm | FSRS (`ts-fsrs`) | Modern spaced repetition |
@@ -57,11 +57,11 @@ photospeak/
 │   ├── api/                        # External API clients (production paths go via backend)
 │   │   ├── backend.ts              # Central fetch wrapper: auth header, 401 → refresh → retry
 │   │   ├── auth.ts                 # /auth/* client (apple, send-code, verify, refresh, me, logout)
-│   │   ├── stt.ts                  # Dispatches to whisper.ts or aliyun-asr.ts based on EXPO_PUBLIC_STT_PROVIDER
-│   │   ├── aliyun-asr.ts           # Calls backend /api/transcribe (DashScope passthrough)
+│   │   ├── stt.ts                  # Resolves EXPO_PUBLIC_STT_PROVIDER → 'aliyun-qwen' (default) or 'whisper' (dev)
+│   │   ├── aliyun-asr.ts           # `TranscriptionSession`: WebSocket client for DashScope paraformer-realtime-v2
 │   │   ├── mimo.ts                 # Calls backend /api/analyze (MiMo passthrough) + chat follow-up
 │   │   ├── mimo-tts.ts             # Calls backend /api/tts
-│   │   └── whisper.ts              # ⚠️ Legacy direct-OpenAI fallback. Slated for removal (P10).
+│   │   └── whisper.ts              # Dev-only batch path to a local Whisper server (not used in production)
 │   │
 │   ├── services/                   # Domain orchestration (pipeline lives here, not in /api)
 │   │   ├── generate.ts             # Confirm-Generate flow: TTS each sentence, persist, create cards
@@ -169,10 +169,11 @@ export interface ChunkExample {
 The pipeline is linear and lives in `src/services/generate.ts`. **No LangGraph or other framework** — plain async/await.
 
 **Phase A — recording → analysis** (runs while user waits, in `app/(tabs)/sessions/[id].tsx`):
-1. User picks photo + records audio → photo + recording stored locally with relative URIs
-2. `src/api/stt.ts` → backend `/api/transcribe` → DashScope → transcript
-3. `src/api/mimo.ts` → backend `/api/analyze` → MiMo → structured JSON (corrections + polished sentences + chunks)
-4. UI displays results as chat bubbles. Follow-up questions: each call sends full chat history + photo back through `/api/analyze`.
+1. User picks photo, then taps record. The recorder hook ([src/hooks/useAudioRecorder.ts](src/hooks/useAudioRecorder.ts)) does two things in parallel: writes a WAV file to disk for replay, AND opens a WebSocket to DashScope `paraformer-realtime-v2` signed by a short-lived token from `POST /api/transcribe/token`. PCM 16-bit @ 16 kHz frames are teed from the mic into the WS as they arrive.
+2. User taps stop. The hook sends `finish-task` and stores the in-flight transcript Promise. The recording's WAV is now on disk.
+3. User taps "Transcribe" — handler awaits `recorder.getTranscript()`. By this point the Promise is usually already resolved (sub-second wait). Backend never saw audio bytes.
+4. `src/api/mimo.ts` → backend `/api/analyze` → MiMo → structured JSON (corrections + polished sentences + chunks)
+5. UI displays results as chat bubbles. Follow-up questions: each call sends full chat history + photo back through `/api/analyze`.
 
 **Phase B — confirm-generate** (runs only when user clicks "Confirm & Generate"):
 1. `src/services/generate.ts` loops over `polished_sentences`, calls `mimo-tts.ts` → backend `/api/tts` for each
@@ -199,16 +200,16 @@ The backend has two roles:
 - `POST /auth/refresh`, `GET /auth/me`, `POST /auth/logout`
 - Returns `{ access_token, refresh_token, user }`. Access token short-TTL, refresh long. Refresh tokens tracked in `refresh_tokens` for revocation.
 
-**2. Upstream proxy** (`/api/*`, all gated by `requireAuth`):
-- `POST /api/transcribe` → DashScope ASR
-- `POST /api/analyze` → MiMo chat completions
-- `POST /api/tts` → MiMo TTS
+**2. Upstream proxy** (`/api/*`):
+- `POST /api/transcribe/token` → returns a 5-minute DashScope token. Client uses it to open a WebSocket to `paraformer-realtime-v2` directly. Strictly per-user JWT (no legacy fallback). See [backend/src/routes/transcribe.ts](backend/src/routes/transcribe.ts).
+- `POST /api/analyze` → MiMo chat completions (gated by `requireAuth`, zod schema, body limit)
+- `POST /api/tts` → MiMo TTS (gated by `requireAuth`, zod schema, body limit)
 
-The proxy currently passes the body through verbatim — no validation, no body-size limit. **This is a known weakness; see optimization.md S2 + P14 (LLM Gateway).** When adding new endpoints, do **not** continue the passthrough pattern — add zod validation and route through the LLM Gateway abstraction once it exists.
+Analyze + TTS use the legacy "thin proxy" pattern (still has `requireAuth` + zod + bodyLimit hardening). When adding new endpoints, prefer the token-issuance pattern from `transcribe.ts` over body proxying, and route through the LLM Gateway abstraction once it exists (P14).
 
-**Auth modes accepted by `/api/*`:**
-- Per-user JWT (the long-term path)
-- Legacy `APP_SHARED_TOKEN` bearer (still accepted for older client builds, scheduled for removal — see S1)
+**Auth modes accepted:**
+- `/api/transcribe/*` — strict per-user JWT only (`requireUser`)
+- `/api/analyze` and `/api/tts` — per-user JWT OR legacy `APP_SHARED_TOKEN` bearer (still accepted for older client builds, scheduled for removal — see S1)
 
 ---
 
@@ -271,9 +272,8 @@ Currently only `users` and `refresh_tokens`. Sessions / cards / stats live **onl
 EXPO_PUBLIC_API_BASE=                # backend URL (currently HTTP IP, switching to https://api.dailyphotospeak.cn after ICP filing — S6)
 EXPO_PUBLIC_API_TOKEN=               # ⚠️ Legacy shared token — do not use in new code (S1)
 EXPO_PUBLIC_SENTRY_DSN=              # Optional; Sentry init is gated on this
-EXPO_PUBLIC_STT_PROVIDER=            # 'whisper' | 'aliyun-qwen'
-EXPO_PUBLIC_OPENAI_API_KEY=          # ⚠️ Only used by whisper.ts fallback. Slated for removal (P10).
-EXPO_PUBLIC_WHISPER_ENDPOINT=        # Optional local Whisper server URL
+EXPO_PUBLIC_STT_PROVIDER=            # 'aliyun-qwen' (default, streaming WS) | 'whisper' (dev, local server)
+EXPO_PUBLIC_WHISPER_ENDPOINT=        # Required only when EXPO_PUBLIC_STT_PROVIDER=whisper — points at scripts/local_whisper_server.py
 ```
 
 **Backend (`backend/.env`, never commit):**
@@ -298,11 +298,8 @@ The original three-phase build plan (Core Pipeline → Generate & Play → SRS +
 **For new work**, consult [`docs/optimization.md`](docs/optimization.md) — it lists everything currently broken or insufficient for scale, in priority order. Don't add features without first checking whether the surrounding area has open 🔴 / 🟡 items.
 
 In-flight concerns to keep in mind (full list in roadmap):
-- 🔴 Legacy `APP_SHARED_TOKEN` still accepted on `/api/*` (S1)
-- 🔴 `/api/*` proxy has no input validation or body size limit (S2)
-- 🔴 No global error handler in Hono (S4)
-- 🔴 No rate limiting (S5)
-- 🟡 Synchronous proxy model — must move to async queue + LLM Gateway before serving 1000 concurrent users (P2 + P14)
+- 🔴 Legacy `APP_SHARED_TOKEN` still accepted on `/api/analyze` + `/api/tts` (S1 — `/api/transcribe/*` is already strict per-user JWT)
+- 🟡 Synchronous proxy model for analyze + TTS — must move to async queue + LLM Gateway before serving 1000 concurrent users (P2 + P14). Transcribe already off this path.
 
 ---
 
@@ -327,6 +324,8 @@ In-flight concerns to keep in mind (full list in roadmap):
 - Do not write absolute file URIs into the DB — always relative to documentDirectory.
 - Do not expose API keys in any log output.
 - Do not add new `/api/*` endpoints by copying the existing passthrough pattern (see Backend Contract above) — add validation, prefer routing through the future LLM Gateway.
+- For new streaming / realtime endpoints, prefer the token-issuance pattern from [backend/src/routes/transcribe.ts](backend/src/routes/transcribe.ts) (backend signs short-lived upstream credential, client connects directly) over proxying long-lived connections.
+- Do not bypass `recorder.getTranscript()` — there is no separate batch transcribe API to fall back to. If a streaming session fails, surface the error to the user rather than re-uploading the recording file to some other endpoint.
 - When calling MiMo for follow-up chat, always include the original photo and the full message history.
 - FSRS `next_review_at` must be stored as ISO string and queried correctly for daily-due cards.
 - Do not read `.env` files via tool calls — values land in conversation history and need rotation.

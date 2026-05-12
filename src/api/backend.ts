@@ -7,8 +7,10 @@
  *   3. Auto-refreshing on 401 and retrying the original request once.
  *   4. Standard JSON request/response framing.
  *
- * Call sites: auth.ts (login flows), mimo.ts / mimo-tts.ts /
- * aliyun-asr.ts (proxied API calls).
+ * Call sites: auth.ts (login flows), mimo.ts / mimo-tts.ts
+ * (proxied API calls), aliyun-asr.ts (just to fetch a short-lived
+ * STT token — the actual audio stream goes directly to DashScope
+ * over WebSocket).
  */
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';

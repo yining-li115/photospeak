@@ -1,6 +1,6 @@
 # PhotoSpeak 系统性优化清单
 
-> 快照时间：2026-05-09
+> 快照时间：2026-05-12
 > 用途：用户量起来前的系统性优化路线图。每项都附文件位置和修复方向，按优先级排好，可逐项勾选推进。
 > 命名规则：项目编号 (S1, P1, Q1...) 是稳定 ID，跨 Phase 引用时用编号。
 
@@ -18,6 +18,7 @@
 
 | 项 | 完成时间 | 备注 |
 |----|---------|------|
+| **STT streaming**（拆 P3 的一部分前置完成）| 2026-05-12 | 客户端直连 DashScope `paraformer-realtime-v2` WebSocket + backend 签短期 token；transcribe 路径上 backend 不再接触音频字节，停录到看见文本从 4–10s 降到 < 1s |
 | **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
 | **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
 | **S4** · 全局错误处理 | 2026-05-09 | Hono `onError` + 进程级 fatal handler；不 swallow，让 PM2 重启 |
@@ -154,13 +155,13 @@
 - **问题**：上游 LLM 5–30s 期间每个请求占 TCP 连接 + Node socket + audio buffer。1000 并发 = 单机直接 OOM；上游配额也会同时被打爆。
 - **修复方向**：API 进程只负责入队和查询，不再持有上游连接。worker 数量显式控制上游并发上限（比如 30 worker = 永远 ≤30 个 MiMo 并发），自然规避上游限流。这一项是后面所有扩容动作的前提。
 
-### P3 · 音频走 OSS presigned URL，不再 base64 过后端
-- [ ] 后端加签名接口 `POST /api/uploads/audio` → 返回 OSS PUT URL + key
-- [ ] 客户端直接 PUT 到 OSS，提交 OSS key 给后端
-- [ ] worker 从 OSS 流式读取喂给 DashScope
-- **文件**：[src/api/aliyun-asr.ts:46-48](../src/api/aliyun-asr.ts#L46-L48)（当前走 backendRequest）；[backend/src/index.ts:80-93](../backend/src/index.ts#L80-L93)
-- **问题**：音频 base64 整块进后端内存。1000 并发 × 5MB ≈ 5GB 内存峰值。
-- **修复方向**：后端从此不接触音频字节，只持有 OSS key。配合 P2 后 worker 才会真正读取。
+### P3 · 音频走 OSS presigned URL（仅剩 TTS / 用户录音存档场景）
+- [x] **transcribe 路径**（2026-05-12 完成）：客户端直连 DashScope `paraformer-realtime-v2` WebSocket，backend 只签短期 token（`POST /api/transcribe/token`），全程不接触音频字节。这是 P3 的最大头，已 ship。
+- [ ] **TTS 输出**：MiMo TTS 生成的 base64 仍走 backend → 客户端写本地。改造方向：backend 直接把生成结果落 OSS，返回签名 URL；和 P4（TTS 缓存）+ P24（客户端云优先存储）合并做。
+- [ ] **用户录音文件**：当前 WAV 落本地磁盘，未来要不要存档到云端是 Q4（数据上云策略决策）的子集。
+- **文件**：[backend/src/routes/transcribe.ts](../backend/src/routes/transcribe.ts)（新加的 token 签发）、[src/api/aliyun-asr.ts](../src/api/aliyun-asr.ts)（WS 客户端）、[src/hooks/useAudioRecorder.ts](../src/hooks/useAudioRecorder.ts)（PCM tee）
+- **历史问题**：音频 base64 整块进后端内存。1000 并发 × 5MB ≈ 5GB 内存峰值。
+- **现状**：transcribe 体感延迟从 4–10s 降到 < 1s，backend 内存峰值不再随 transcribe 并发数膨胀（一次 token 签发是 ~200 字节 JSON）。剩下两个子项体量小，跟着 P4/P24 一起做即可。
 
 ### P4 · TTS 结果缓存
 - [ ] 计算 `key = sha256(text + voice_id + model)`

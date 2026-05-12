@@ -1,5 +1,5 @@
 /**
- * /api/* — proxied calls to MiMo and DashScope.
+ * /api/* — proxied calls to MiMo (analyze + tts).
  *
  * Each route is gated by:
  *   1. requireAuth (JWT or legacy APP_SHARED_TOKEN — see S1)
@@ -9,6 +9,11 @@
  *      shape we expect — model is locked to the value our client sends,
  *      so attackers can't swap in arbitrary chat-completions calls and
  *      turn this proxy into a generic OpenAI passthrough)
+ *
+ * STT lives in its own router (`routes/transcribe.ts`) — clients call
+ * `POST /api/transcribe/token` to get a short-lived DashScope
+ * credential, then stream audio directly to DashScope over
+ * WebSocket. Audio bytes never transit this process.
  *
  * This is the legacy "thin proxy" architecture and is slated to grow
  * into a proper LLM Gateway with multi-provider routing, cost
@@ -24,49 +29,18 @@ import { requireAuth, type AuthVars } from '../auth/middleware.js';
 import { clientIp, rateLimit } from '../middleware/rate-limit.js';
 
 const MIMO_BASE = 'https://api.xiaomimimo.com/v1';
-const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com/api/v1';
 
 // ─── schemas ──────────────────────────────────────────────────────
 //
 // Notes on bounds:
-//   - 20MB string cap on the audio data URI matches the 15MB body
-//     limit (base64 inflates ~33%).
 //   - 10MB string cap on image_url.url matches the 5MB analyze body
-//     limit similarly.
+//     limit (base64 inflates ~33%).
 //   - max_completion_tokens is capped at 32k — well above what our
 //     client ever requests (12288), but well below MiMo's max so we
 //     can't be tricked into very expensive single calls.
 //   - Unknown fields are silently stripped (zod's default), so even
 //     if a client tries to inject `tools`, `stream`, etc. the proxy
 //     forwards a clean body.
-
-const transcribeSchema = z.object({
-  model: z.literal('qwen3-asr-flash'),
-  input: z.object({
-    messages: z
-      .array(
-        z.object({
-          role: z.literal('user'),
-          content: z
-            .array(z.object({ audio: z.string().max(20_000_000) }))
-            .min(1)
-            .max(1),
-        })
-      )
-      .min(1)
-      .max(1),
-  }),
-  parameters: z
-    .object({
-      asr_options: z
-        .object({
-          enable_itn: z.boolean().optional(),
-          language: z.string().max(16).optional(),
-        })
-        .optional(),
-    })
-    .optional(),
-});
 
 const analyzeContentItemSchema = z.union([
   z.object({
@@ -128,7 +102,6 @@ async function passthrough(res: Response): Promise<Response> {
 
 export interface ProxyEnv {
   MIMO_API_KEY: string;
-  DASHSCOPE_API_KEY: string;
   /** Legacy shared bearer — passed through to requireAuth so old
    *  IPA/APK builds keep working. Sunset path tracked in S1. */
   APP_SHARED_TOKEN?: string;
@@ -154,27 +127,6 @@ export function createProxyRouter(env: ProxyEnv) {
         return userId ? `user:${userId}` : `ip:${clientIp(c)}`;
       },
     })
-  );
-
-  router.post(
-    '/transcribe',
-    bodyLimit({ maxSize: 15 * 1024 * 1024 }),
-    zValidator('json', transcribeSchema),
-    async (c) => {
-      const body = c.req.valid('json');
-      const upstream = await fetch(
-        `${DASHSCOPE_BASE}/services/aigc/multimodal-generation/generation`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${env.DASHSCOPE_API_KEY}`,
-          },
-          body: JSON.stringify(body),
-        }
-      );
-      return passthrough(upstream);
-    }
   );
 
   router.post(

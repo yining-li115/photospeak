@@ -78,9 +78,15 @@
         }
       ],
       [
-        "expo-audio",
+        "@siteed/audio-studio",
         {
-          "microphonePermission": "PhotoSpeak needs your microphone so you can record yourself describing photos in English."
+          "iosConfig": {
+            "microphoneUsageDescription": "PhotoSpeak needs your microphone so you can record yourself describing photos in English."
+          },
+          "enableNotifications": false,
+          "enableBackgroundAudio": false,
+          "enablePhoneStateHandling": false,
+          "enableDeviceDetection": false
         }
       ],
       "expo-secure-store"

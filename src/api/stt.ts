@@ -1,29 +1,26 @@
-import { transcribeAudioWithAliyun } from './aliyun-asr';
-import { transcribeAudio as transcribeWithWhisper } from './whisper';
-
+/**
+ * STT provider resolver.
+ *
+ * Production path is `aliyun-qwen`: the recorder hook
+ * (`src/hooks/useAudioRecorder.ts`) opens a streaming WebSocket to
+ * DashScope's paraformer-realtime-v2 directly, signed by a
+ * short-lived token from our backend. Audio bytes never transit our
+ * Node process.
+ *
+ * The only other value, `whisper`, is a dev convenience that talks
+ * to a local Whisper-compatible HTTP server set via
+ * `EXPO_PUBLIC_WHISPER_ENDPOINT` (typically
+ * `scripts/local_whisper_server.py`). The previous OpenAI-cloud
+ * fallback was removed in P10 — shipping a third-party API key in
+ * the bundle was a security mistake.
+ *
+ * No `transcribeAudio()` function lives here anymore. The recorder
+ * hook is the single source of truth for STT lifecycle — call
+ * `recorder.getTranscript()` after `recorder.stop()`.
+ */
 export type SttProvider = 'whisper' | 'aliyun-qwen';
 
-// Default to aliyun-qwen (production path — routes through the
-// backend proxy, no upstream key in the client). `whisper` is now a
-// dev-only path that talks to a local Whisper server set via
-// EXPO_PUBLIC_WHISPER_ENDPOINT. The previous OpenAI-cloud fallback
-// (with EXPO_PUBLIC_OPENAI_API_KEY embedded in the bundle) was
-// removed because the key shipped inside every IPA/APK — see
-// optimization item P10.
-function resolveProvider(): SttProvider {
-  const raw = process.env.EXPO_PUBLIC_STT_PROVIDER?.toLowerCase().trim();
-  if (raw === 'whisper') return 'whisper';
-  return 'aliyun-qwen';
-}
-
-export async function transcribeAudio(recordingUri: string): Promise<string> {
-  const provider = resolveProvider();
-  if (provider === 'whisper') {
-    return transcribeWithWhisper(recordingUri);
-  }
-  return transcribeAudioWithAliyun(recordingUri);
-}
-
 export function currentSttProvider(): SttProvider {
-  return resolveProvider();
+  const raw = process.env.EXPO_PUBLIC_STT_PROVIDER?.toLowerCase().trim();
+  return raw === 'whisper' ? 'whisper' : 'aliyun-qwen';
 }
