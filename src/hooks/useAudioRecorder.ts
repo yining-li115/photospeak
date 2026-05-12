@@ -6,18 +6,19 @@
  *   2. A WebSocket session to DashScope paraformer-realtime-v2
  *   3. PCM frames being teed from #1 into #2
  *
- * The point of doing all three together is the user-visible win: by
- * the time the user taps "transcribe" after stopping, the transcript
- * is already finalised (or finishing) because we streamed audio
- * throughout the recording. The previous flow shipped a base64 m4a
- * after the fact, which is what the 4–10s wait was measuring.
+ * Start path is parallelised so the user sees immediate feedback:
+ *   - studio.startRecording() and TranscriptionSession.create() run
+ *     concurrently. The recording starts in ~100ms regardless of how
+ *     long the WS handshake takes.
+ *   - PCM frames that arrive before the session is open are buffered
+ *     in memory, then flushed once the session is ready.
  *
  * UI contract preserved:
- *   - `start()` / `stop()` look the same to callers
- *   - `stop()` still returns a recording file URI on disk
- *   - New: `getTranscript()` resolves to the final transcript. Safe
- *     to call any time after `stop()`; it just awaits a promise
- *     that's been in flight since the moment recording ended.
+ *   - `start()` returns true/false synchronously after audio is rolling
+ *   - `stop()` returns a recording file URI on disk
+ *   - `getTranscript()` resolves to the final transcript. Safe to call
+ *     any time after `stop()`; it just awaits a promise that's been
+ *     in flight since the moment recording ended.
  *
  * If any part of the streaming path fails (token, WS connect, mid-
  * stream disconnect), the failure surfaces via getTranscript()'s
@@ -26,10 +27,11 @@
  * deliberately removed (docs/optimization.md).
  *
  * Dev override: if `EXPO_PUBLIC_STT_PROVIDER=whisper`, the WS path
- * is skipped and `getTranscript()` instead resolves via a batch
- * POST to a local Whisper-compatible server (see whisper.ts). This
- * is only useful when running against `scripts/local_whisper_server.py`
- * on the developer's Mac; production builds should leave this unset.
+ * is skipped entirely and `getTranscript()` instead resolves via a
+ * batch POST to a local Whisper-compatible server (see whisper.ts).
+ * Whisper is NEVER used as a fallback for aliyun-qwen — production
+ * builds with `EXPO_PUBLIC_STT_PROVIDER=aliyun-qwen` (the default)
+ * fail loudly via the transcript rejection if streaming breaks.
  */
 import {
   AudioStudioModule,
@@ -73,12 +75,23 @@ const RECORDING_CONFIG = {
   // decodes once and ships as a binary WS frame.
 };
 
+// Cap the pre-session PCM buffer at ~10 seconds. The WS handshake
+// should resolve in well under a second; if it hasn't by the time
+// we've recorded ten seconds, something is wrong upstream and we
+// drop the oldest frames rather than blow up JS memory.
+const MAX_BUFFERED_FRAMES = 100; // 100 × 100ms intervals = 10s
+
 export function useRecorder(): UseRecorder {
   const studio = useAudioStudioRecorder();
   const [permission, setPermission] = useState<RecorderPermission>('unknown');
 
   const sessionRef = useRef<TranscriptionSession | null>(null);
   const transcriptPromiseRef = useRef<Promise<string> | null>(null);
+  // Prevents the "I tapped the button three times because nothing
+  // happened" cascade — start() is async and the user can re-fire it
+  // while the previous call is still in flight. Re-entrant calls now
+  // resolve with `false` immediately.
+  const startingRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -99,62 +112,115 @@ export function useRecorder(): UseRecorder {
   }, []);
 
   const start = useCallback(async (): Promise<boolean> => {
-    let p = await AudioStudioModule.getPermissionsAsync();
-    if (!p.granted) {
-      p = await AudioStudioModule.requestPermissionsAsync();
-    }
-    if (!p.granted) {
-      setPermission('denied');
-      return false;
-    }
-    setPermission('granted');
-
-    const provider = currentSttProvider();
-    transcriptPromiseRef.current = null;
-
-    // For aliyun-qwen (production), open the streaming session
-    // before rolling the mic. If the session can't open (network,
-    // expired JWT, upstream down), we don't want a recording the
-    // user can't transcribe.
-    if (provider === 'aliyun-qwen') {
-      try {
-        sessionRef.current = await TranscriptionSession.create();
-      } catch (e) {
-        console.warn('[recorder] failed to open transcription session', e);
-        return false;
-      }
-    } else {
-      sessionRef.current = null;
-    }
+    if (startingRef.current) return false;
+    startingRef.current = true;
 
     try {
-      await studio.startRecording({
-        ...RECORDING_CONFIG,
-        onAudioStream:
-          provider === 'aliyun-qwen'
-            ? async (event: AudioDataEvent) => {
-                // streamFormat defaults to 'raw' → data is base64
-                // PCM bytes on native. Web emits typed arrays, which
-                // we don't ship today; ignore those frames defensively.
-                if (typeof event.data !== 'string') return;
-                if (event.data.length === 0) return;
-                try {
-                  sessionRef.current?.sendAudio(event.data);
-                } catch {
-                  // WS dropped mid-stream. Swallow here — the failure
-                  // resurfaces when the caller awaits getTranscript().
-                }
-              }
-            : undefined,
-      });
-    } catch (e) {
-      console.warn('[recorder] failed to start recording', e);
-      sessionRef.current?.cancel();
-      sessionRef.current = null;
-      return false;
-    }
+      let p = await AudioStudioModule.getPermissionsAsync();
+      if (!p.granted) {
+        p = await AudioStudioModule.requestPermissionsAsync();
+      }
+      if (!p.granted) {
+        setPermission('denied');
+        return false;
+      }
+      setPermission('granted');
 
-    return true;
+      const provider = currentSttProvider();
+      transcriptPromiseRef.current = null;
+      sessionRef.current = null;
+
+      if (provider !== 'aliyun-qwen') {
+        // Whisper dev path: no streaming, just record to a file.
+        try {
+          await studio.startRecording({ ...RECORDING_CONFIG });
+          return true;
+        } catch (e) {
+          console.warn('[recorder] failed to start recording', e);
+          return false;
+        }
+      }
+
+      // ── aliyun-qwen: parallel audio + WS handshake ──
+      //
+      // Frames that arrive on the mic before the WS is open get
+      // buffered here; once `sessionReady` flips true the buffer
+      // drains in order. This lets the recording UI react in
+      // ~100ms while the network handshake (~250–750ms) runs in
+      // the background.
+      const buffer: string[] = [];
+      let sessionReady = false;
+      let sessionFailed = false;
+
+      const sessionPromise = TranscriptionSession.create()
+        .then((s) => {
+          if (sessionFailed) {
+            // start() bailed before we got here — just close it.
+            s.cancel();
+            return;
+          }
+          sessionRef.current = s;
+          sessionReady = true;
+          for (const frame of buffer) {
+            try {
+              s.sendAudio(frame);
+            } catch {
+              break;
+            }
+          }
+          buffer.length = 0;
+        })
+        .catch((e) => {
+          sessionFailed = true;
+          console.warn('[recorder] failed to open transcription session', e);
+        });
+
+      try {
+        await studio.startRecording({
+          ...RECORDING_CONFIG,
+          onAudioStream: async (event: AudioDataEvent) => {
+            // streamFormat defaults to 'raw' → data is base64 PCM
+            // bytes on native. Web emits typed arrays, which we
+            // don't ship today; ignore those frames defensively.
+            if (typeof event.data !== 'string') return;
+            if (event.data.length === 0) return;
+
+            if (sessionReady && sessionRef.current) {
+              try {
+                sessionRef.current.sendAudio(event.data);
+              } catch {
+                // WS dropped mid-stream. Failure surfaces when the
+                // caller awaits getTranscript().
+              }
+              return;
+            }
+
+            // Session still opening — buffer with a cap so a
+            // never-opening session doesn't grow JS heap unboundedly.
+            buffer.push(event.data);
+            if (buffer.length > MAX_BUFFERED_FRAMES) buffer.shift();
+          },
+        });
+      } catch (e) {
+        console.warn('[recorder] failed to start recording', e);
+        sessionFailed = true;
+        // If the session opens after we've bailed, the .then above
+        // closes it. If it opened first, sessionRef.current already
+        // points at the live session and we close it ourselves.
+        await sessionPromise;
+        // Cast: TS narrows sessionRef.current to null based on the
+        // synchronous assignment a few lines up; the .then callback
+        // mutates it asynchronously and TS can't see that.
+        const opened = sessionRef.current as TranscriptionSession | null;
+        opened?.cancel();
+        sessionRef.current = null;
+        return false;
+      }
+
+      return true;
+    } finally {
+      startingRef.current = false;
+    }
   }, [studio]);
 
   const stop = useCallback(async (): Promise<string | null> => {
@@ -171,13 +237,25 @@ export function useRecorder(): UseRecorder {
       // because the file flush errored.
     }
 
-    // Kick off finalisation immediately. The promise is stored
-    // (not awaited) so the call site sees "recording saved" right
-    // away; the transcript resolves in the background and is ready
-    // by the time the user taps the transcribe button.
+    const provider = currentSttProvider();
     const session = sessionRef.current;
     sessionRef.current = null;
-    if (session) {
+
+    if (provider === 'whisper') {
+      // Dev path: post the saved WAV to a local Whisper server.
+      transcriptPromiseRef.current = fileUri
+        ? transcribeWithWhisper(fileUri)
+        : Promise.reject(
+            new AliyunAsrError(
+              'no recording file to transcribe',
+              'finalize'
+            )
+          );
+    } else if (session) {
+      // Production: finalise the streaming session. The promise is
+      // stored (not awaited) so the call site sees "recording saved"
+      // right away; the transcript resolves in the background and is
+      // ready by the time the user taps the transcribe button.
       transcriptPromiseRef.current = session.finish().catch((err) => {
         if (err instanceof AliyunAsrError) {
           console.warn(
@@ -189,11 +267,22 @@ export function useRecorder(): UseRecorder {
         }
         throw err;
       });
-    } else if (fileUri) {
-      // whisper dev path: no streaming, fire batch request against
-      // local server using the recorded file.
-      transcriptPromiseRef.current = transcribeWithWhisper(fileUri);
+    } else {
+      // aliyun-qwen mode but session never opened — most likely
+      // network / auth failure during the parallel handshake. Surface
+      // it loudly rather than silently falling back to whisper.
+      transcriptPromiseRef.current = Promise.reject(
+        new AliyunAsrError(
+          'transcription session was not available — check network and re-record',
+          'finalize'
+        )
+      );
     }
+
+    // Attach a no-op catch so a never-awaited rejection doesn't fire
+    // an "unhandledRejection" warning before the caller gets to
+    // getTranscript().
+    transcriptPromiseRef.current.catch(() => {});
 
     return fileUri;
   }, [studio]);
