@@ -29,7 +29,10 @@
 
 | 项 | 完成时间 | 备注 |
 |----|---------|------|
-| **STT streaming**（拆 P3 的一部分前置完成）| 2026-05-12 | 客户端直连 DashScope `paraformer-realtime-v2` WebSocket + backend 签短期 token；transcribe 路径上 backend 不再接触音频字节，停录到看见文本从 4–10s 降到 < 1s |
+| **P1（客户端部分）** · Sentry 接入 | 2026-05-12 | DSN 配上、`Sentry.init` 跑起来；关键 catch 加 `captureException` 带 `area:/stage:` tag（recorder.start / session / transcribe / analyze / chat / pick）。**剩余**：source map plugin、APM、业务面板（Phase 2 收尾时做） |
+| **错误提示中文化** | 2026-05-12 | 转写 / 分析 / 对话 / 录音保存 / 选图 5 处 `Alert.alert` 从英文 + 原始 err.message 改成短中文提示；原始错误进 `console.warn` + Sentry 留给开发者 |
+| **录音键并行 buffer + re-entry guard** | 2026-05-12 | 修 Build 7 上线后用户报告的"按下没反应连点"bug；audio 录制和 WS 握手并行启动，PCM 帧在 WS 没开好前进 buffer，开好后一次性 flush；start() 加单飞防御 |
+| **STT streaming**（P3 的 transcribe 子项）| 2026-05-12 | 客户端直连 DashScope `paraformer-realtime-v2` WebSocket + backend 签短期 token；transcribe 路径上 backend 不再接触音频字节，停录到看见文本从 4–10s 降到 < 1s |
 | **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
 | **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
 | **S4** · 全局错误处理 | 2026-05-09 | Hono `onError` + 进程级 fatal handler；不 swallow，让 PM2 重启 |
@@ -149,12 +152,15 @@
 ## 🟡 性能/稳定性隐患（用户多了会出问题）
 
 ### P1 · 接入监控（Sentry + APM + 业务指标）
-- [ ] 重新接 Sentry（DSN + config plugin 一起回来，恢复 source map 上传）
+- [x] **Sentry JS SDK 接通**（2026-05-12）：客户端 `EXPO_PUBLIC_SENTRY_DSN` 填好，错误自动捕获 + 关键 catch 加 `captureException` 带 `area:/stage:` tag
+- [ ] Sentry config plugin（恢复 source map 上传，让 stack trace 显源码而不是 bundle 行号）
+- [ ] 服务端 Sentry（`@sentry/node` + Hono integration），跟客户端 event 用 `request_id` 串起来
 - [ ] 接 APM（阿里云 ARMS 或自建 OpenTelemetry → Grafana）
 - [ ] 业务面板：队列长度、worker 占用、上游配额使用率、当日请求成本
-- **文件**：[app/_layout.tsx:14-22](../app/_layout.tsx#L14-L22)（JS Sentry init 已存在但 plugin 被移除）；提交 [`afe1c60`](../) 移除了 Sentry plugin
+- **文件**：[app/_layout.tsx:14-22](../app/_layout.tsx#L14-L22)（JS Sentry init）、[src/hooks/useAudioRecorder.ts](../src/hooks/useAudioRecorder.ts)、[app/(tabs)/sessions/[id].tsx](../app/(tabs)/sessions/[id].tsx)（catch site 都加了 captureException）
 - **问题**：当前线上崩了完全不知道；后续优化都是瞎猜。
-- **修复方向**：先把 Sentry 接回来（最低成本拿到崩溃流），再选 APM 看 P95/P99 与上游耗时分布。指标先于优化。
+- **现状**：客户端崩溃 / 错误流已经能进 Sentry dashboard，邮件告警可配。剩余动作让 stack trace 更易读 + 服务端也接上 + 业务级指标。
+- **修复方向**：先把 Sentry 接回来 ✓ → 再选 APM 看 P95/P99 与上游耗时分布。指标先于优化。
 
 ### P2 · 异步化改造（同步直通 → 队列 + worker）⭐
 - [ ] 引入 Redis（建议 Aliyun 云数据库 Redis 版）
@@ -421,8 +427,9 @@ S1 → S2 → S3 → S4 → S5 → S6（S6 等备案，其余立即）
 完成后：钱包不会被刷穿，进程不会无声崩溃，明文流量收回。
 
 ### Phase 2：上观测（无指标谈优化都是瞎猜）
-P1（Sentry 先回来 → APM → 业务指标）+ P8（结构化日志）+ Q5（request_id）
+P1（**Sentry 客户端已通 ✓** → source map plugin → 服务端 Sentry → APM → 业务面板）+ P8（结构化日志）+ Q5（request_id）
 完成后：能量化下面每一步的实际收益。
+**当前状态**：客户端崩溃 / 错误流已经能到 Sentry dashboard，下次有用户报"录音失败"之类不用 SSH grep PM2 logs 了。下面 P26 / P18 一周后看 Sentry 数据再调参。
 
 ### Phase 3：异步化 + LLM Gateway（扩容的地基 + 后续运营的承载）⭐
 P2（队列 + worker）→ **P14（LLM Gateway 抽象）** → P3（音频走 OSS）→ P4（TTS 缓存）→ P5（上游超时）
