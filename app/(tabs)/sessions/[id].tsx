@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
+import { friendlyTranscribeMessage } from '../../../src/api/aliyun-asr';
 import {
   analyzeSession,
   followUpChat,
@@ -179,7 +180,10 @@ export default function SessionDetailScreen() {
       }
       setTranscript(t);
     } catch (e) {
-      Alert.alert('Transcription failed', e instanceof Error ? e.message : String(e));
+      // Keep technical detail in logs; show the user a short,
+      // actionable Chinese message keyed off the failure stage.
+      console.warn('[handleTranscribe] error', e);
+      Alert.alert('识别失败', friendlyTranscribeMessage(e));
     } finally {
       setTranscribing(false);
     }

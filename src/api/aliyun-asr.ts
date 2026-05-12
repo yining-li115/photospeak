@@ -34,6 +34,36 @@ export class AliyunAsrError extends Error {
   }
 }
 
+/**
+ * Map a transcription failure to a short, user-facing Chinese
+ * message that suggests what to do next. The underlying `err`
+ * usually has a stage label (token / connect / stream / finalize)
+ * that tells us *where* in the pipeline things broke; we use that
+ * to give a hint rather than a generic "something failed".
+ *
+ * Always pair with a `console.warn` of the raw error so we keep the
+ * technical detail in logs for debugging.
+ */
+export function friendlyTranscribeMessage(err: unknown): string {
+  if (err instanceof AliyunAsrError) {
+    switch (err.stage) {
+      case 'token':
+        // Backend unreachable or auth issue — almost always the
+        // user's network. Encourage them to check it first.
+        return '网络不太稳，请检查后重新录一次';
+      case 'connect':
+        // Token in hand, but the upstream WebSocket didn't open.
+        return '语音服务暂时连不上，稍后再试';
+      case 'stream':
+        // Mid-stream disconnect — usually network flapped.
+        return '录音中断了，请重新录一次';
+      case 'finalize':
+        return '识别出了点问题，请重新录一次';
+    }
+  }
+  return '识别失败，请重新录一次';
+}
+
 interface TokenResponse {
   token: string;
   expires_at: number;
