@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/ai/contracts.test.ts src/ai/idempotency.test.ts src/ai/openai-compatible-provider.test.ts src/ai/volcengine-tts-provider.test.ts src/auth/account-deletion-policy.test.ts src/auth/apple-compensation.test.ts src/auth/apple-login-reservation-policy.test.ts src/auth/apple-server.test.ts src/auth/deletion-receipt.test.ts src/auth/jwt.test.ts src/auth/phone-account-service.test.ts src/auth/recovery-policy.test.ts src/auth/refresh-replay.test.ts src/auth/session-policy.test.ts src/db/migrations.test.ts src/middleware/client-version.test.ts src/services/account-retention.test.ts src/services/graceful-shutdown.test.ts src/transcription/volcengine-protocol.test.ts src/transcription/volcengine-provider.test.ts",
+    "verify:volcengine": "node scripts/verify-volcengine-ai.mjs && node scripts/verify-volcengine-asr.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "accounts:purge": "tsx src/jobs/purge-deleted-accounts.ts"
