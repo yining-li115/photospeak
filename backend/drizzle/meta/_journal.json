@@ -8,6 +8,48 @@
       "when": 1777906940956,
       "tag": "0000_wise_magik",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789834052230,
+      "tag": "0001_tan_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789834137805,
+      "tag": "0002_next_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789834486180,
+      "tag": "0003_thankful_otto_octavius",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789836037958,
+      "tag": "0004_lush_micromacro",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789841779918,
+      "tag": "0005_unusual_spot",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789844224964,
+      "tag": "0006_ai_operations",
+      "breakpoints": true
     }
   ]
 }

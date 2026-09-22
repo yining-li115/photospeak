@@ -1,50 +1,61 @@
-# Welcome to your Expo app 👋
+# PhotoSpeak
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+PhotoSpeak is a local-first Expo/React Native English-practice app. A learner
+chooses a photo, describes it for up to 60 seconds (with a 10-second grace
+period), receives corrections and a polished version, then generates listening
+audio and review cards.
 
-## Get started
+The mobile app owns recording, playback and owner-scoped local learning data.
+The Hono/PostgreSQL backend owns authentication, provider credentials, prompts,
+model selection, response validation, usage accounting and the constrained ASR
+WebSocket relay. No AI key belongs in the mobile bundle.
 
-1. Install dependencies
+Billable analysis and TTS calls use owner-scoped mobile intents plus a durable
+server operation record. Lost responses and App restarts replay encrypted,
+short-lived results instead of invoking the provider again; an upstream with
+no documented idempotency/query API fails closed when its outcome is unknown.
 
-   ```bash
-   npm install
-   ```
+## Repository layout
 
-2. Start the app
+- `app/` — Expo Router screens.
+- `src/api/` — provider-neutral mobile API clients.
+- `src/db/` and `src/storage/` — owner-scoped SQLite rows and managed media.
+- `src/hooks/useAudioRecorder.ts` — microphone/ASR state machine.
+- `backend/src/ai/` — text and speech provider boundaries.
+- `backend/src/auth/` — Apple/phone auth and session families.
+- `docs/` — product, subscription, provider and historical architecture notes.
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Local verification
 
 ```bash
-npm run reset-project
+npm ci
+npm run typecheck
+npm run lint:ci
+npm run test:db
+
+cd backend
+npm ci
+npm run typecheck
+npm test
+npm run build
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Copy the committed `.env.example` files for local configuration. Never commit
+real environment files and never expose provider credentials through
+`EXPO_PUBLIC_*`. See [backend/README.md](backend/README.md) for the backend
+contract and deployment requirements.
 
-## Learn more
+## Current release gates
 
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- Provision and evaluate the chosen production AI/speech providers.
+- The dedicated Volcengine TTS v3 and streaming-ASR 2.0 adapters are
+  implemented and protocol-tested; complete staging voice, accuracy and
+  latency evaluation before production traffic.
+- Implement and sandbox-test StoreKit/Google Play entitlement lifecycles before
+  selling Plus.
+- Configure the private SSE-KMS OSS backup target, failure alert and lifecycle;
+  complete a disposable-database restore drill.
+- Rehearse forward migrations, WebSocket proxying and the non-rolling auth
+  cutover in staging.
+- Match the Sentry region/retention disclosure and in-app opt-out to App Store
+  privacy labels, then obtain final legal review of the policy and terms.

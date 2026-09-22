@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -31,10 +32,18 @@ export default function PlayerScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const s = await getSession(id);
-      if (!cancelled) {
-        setSession(s);
-        setLoading(false);
+      try {
+        const s = await getSession(id, { chatLimit: 0 });
+        if (!cancelled) setSession(s);
+      } catch (error) {
+        if (!cancelled) {
+          Alert.alert(
+            'Could not load podcast',
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
@@ -74,15 +83,20 @@ function PlayerView({ session }: { session: Session }) {
 
   // Map the global queue's currentIndex back to a local sentence index in
   // this session's sentences[]. -1 if some other session is active.
-  const activeLocalIndex = useMemo(() => {
-    if (!sessionIsCurrent || !player.current) return -1;
-    return player.current.sentenceIndex;
-  }, [sessionIsCurrent, player.current]);
+  const activeLocalIndex =
+    sessionIsCurrent && player.current ? player.current.sentenceIndex : -1;
 
   const startThisSession = (sentenceIndex: number) => {
     const tracks = tracksFromSession(session);
     if (tracks.length === 0) return;
-    player.loadQueue(tracks, sentenceIndex);
+    void player.loadQueue(tracks, sentenceIndex).then((loaded) => {
+      if (!loaded) {
+        Alert.alert(
+          'Could not start playback',
+          'Audio is busy or the player is recovering. Please try again.'
+        );
+      }
+    });
   };
 
   const handlePlayPauseTap = () => {

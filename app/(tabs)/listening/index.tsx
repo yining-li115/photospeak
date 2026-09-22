@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -12,28 +14,54 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card } from '../../../src/components/Card';
 import { usePlayer } from '../../../src/context/player';
-import { listSessionsWithPodcast } from '../../../src/db/sessions';
+import {
+  getSession,
+  listSessionSummaries,
+  type SessionCursor,
+  type SessionSummary,
+} from '../../../src/db/sessions';
 import {
   tracksFromSession,
   tracksFromSessions,
 } from '../../../src/services/queue';
 import { colors, radius, spacing, text } from '../../../src/theme';
-import type { Session } from '../../../src/types';
+
+const PAGE_SIZE = 30;
+const PLAY_RECENT_SESSION_LIMIT = 10;
 
 export default function ListeningScreen() {
   const router = useRouter();
   const player = usePlayer();
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<SessionCursor | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
+  const [loadingQueue, setLoadingQueue] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        const rows = await listSessionsWithPodcast();
-        if (!cancelled) {
-          setSessions(rows);
-          setLoading(false);
+        try {
+          const page = await listSessionSummaries({
+            limit: PAGE_SIZE,
+            podcastOnly: true,
+          });
+          if (!cancelled) {
+            setSessions(page.items);
+            setNextCursor(page.nextCursor);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            Alert.alert(
+              'Could not load podcasts',
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        } finally {
+          if (!cancelled) setLoading(false);
         }
       })();
       return () => {
@@ -42,18 +70,83 @@ export default function ListeningScreen() {
     }, [])
   );
 
-  const playRow = (session: Session) => {
-    const queue = tracksFromSession(session);
-    if (queue.length === 0) return;
-    player.loadQueue(queue, 0);
-    router.push(`/listening/${session.id}`);
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await listSessionSummaries({
+        limit: PAGE_SIZE,
+        cursor: nextCursor,
+        podcastOnly: true,
+      });
+      setSessions((previous) => {
+        const known = new Set(previous.map((item) => item.id));
+        return [
+          ...previous,
+          ...page.items.filter((item) => !known.has(item.id)),
+        ];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (error) {
+      Alert.alert(
+        'Could not load more podcasts',
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [nextCursor]);
+
+  const playRow = async (summary: SessionSummary) => {
+    if (loadingSessionId || loadingQueue) return;
+    setLoadingSessionId(summary.id);
+    try {
+      const session = await getSession(summary.id, { chatLimit: 0 });
+      if (!session) throw new Error('Session not found');
+      const queue = tracksFromSession(session);
+      if (queue.length === 0) throw new Error('This podcast has no playable audio');
+      if (await player.loadQueue(queue, 0)) {
+        router.push(`/listening/${summary.id}`);
+      } else {
+        throw new Error('The audio player could not start');
+      }
+    } catch (error) {
+      Alert.alert(
+        'Could not play podcast',
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setLoadingSessionId(null);
+    }
   };
 
-  const playAll = () => {
-    const queue = tracksFromSessions(sessions);
-    if (queue.length === 0) return;
-    player.loadQueue(queue, 0);
-    router.push(`/listening/${sessions[0].id}`);
+  const playRecent = async () => {
+    if (loadingQueue || loadingSessionId || sessions.length === 0) return;
+    setLoadingQueue(true);
+    try {
+      const loaded = await Promise.all(
+        sessions
+          .slice(0, PLAY_RECENT_SESSION_LIMIT)
+          .map((summary) => getSession(summary.id, { chatLimit: 0 }))
+      );
+      const playable = loaded.filter((session) => session !== null);
+      const queue = tracksFromSessions(playable);
+      if (queue.length === 0) throw new Error('No playable audio was found');
+      if (await player.loadQueue(queue, 0)) {
+        router.push(`/listening/${queue[0].sessionId}`);
+      } else {
+        throw new Error('The audio player could not start');
+      }
+    } catch (error) {
+      Alert.alert(
+        'Could not start playback',
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setLoadingQueue(false);
+    }
   };
 
   return (
@@ -64,7 +157,8 @@ export default function ListeningScreen() {
         <Text style={styles.headerTitle}>Listening</Text>
         {sessions.length > 1 && (
           <Pressable
-            onPress={playAll}
+            onPress={() => void playRecent()}
+            disabled={loadingQueue || loadingSessionId !== null}
             hitSlop={12}
             accessibilityLabel="Play all podcasts"
             style={({ pressed }) => [
@@ -72,8 +166,12 @@ export default function ListeningScreen() {
               pressed && { opacity: 0.85 },
             ]}
           >
-            <Ionicons name="play" size={12} color={colors.textPrimary} />
-            <Text style={styles.playAllLabel}>Play all</Text>
+            {loadingQueue ? (
+              <ActivityIndicator size="small" color={colors.textPrimary} />
+            ) : (
+              <Ionicons name="play" size={12} color={colors.textPrimary} />
+            )}
+            <Text style={styles.playAllLabel}>Play recent</Text>
           </Pressable>
         )}
       </View>
@@ -92,9 +190,20 @@ export default function ListeningScreen() {
               isCurrent={
                 player.current?.sessionId === item.id && player.isPlaying
               }
-              onPress={() => playRow(item)}
+              loading={loadingSessionId === item.id}
+              onPress={() => void playRow(item)}
             />
           )}
+          onEndReached={() => void loadMore()}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator
+                style={styles.listFooter}
+                color={colors.textTertiary}
+              />
+            ) : null
+          }
         />
       )}
     </SafeAreaView>
@@ -104,17 +213,20 @@ export default function ListeningScreen() {
 function PodcastRow({
   session,
   isCurrent,
+  loading,
   onPress,
 }: {
-  session: Session;
+  session: SessionSummary;
   isCurrent: boolean;
+  loading: boolean;
   onPress: () => void;
 }) {
   const date = new Date(session.created_at).toLocaleDateString();
-  const sentenceCount = session.polished_sentences.length;
+  const sentenceCount = session.sentence_count;
   return (
     <Pressable
       onPress={onPress}
+      disabled={loading}
       style={({ pressed }) => pressed && { opacity: 0.85 }}
     >
       <Card style={styles.row} padding="md">
@@ -130,11 +242,15 @@ function PodcastRow({
           </Text>
         </View>
         <View style={styles.playBadge}>
-          <Ionicons
-            name={isCurrent ? 'pause' : 'play'}
-            size={14}
-            color={colors.textPrimary}
-          />
+          {loading ? (
+            <ActivityIndicator size="small" color={colors.textPrimary} />
+          ) : (
+            <Ionicons
+              name={isCurrent ? 'pause' : 'play'}
+              size={14}
+              color={colors.textPrimary}
+            />
+          )}
         </View>
       </Card>
     </Pressable>
@@ -176,6 +292,9 @@ const styles = StyleSheet.create({
   listContent: {
     padding: spacing.lg,
     paddingTop: 0,
+  },
+  listFooter: {
+    paddingVertical: spacing.lg,
   },
   playAllPill: {
     flexDirection: 'row',

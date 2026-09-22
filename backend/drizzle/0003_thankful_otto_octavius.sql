@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS "ai_usage_events_request_id_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ai_usage_events_user_request_id_idx" ON "ai_usage_events" USING btree ("user_id","request_id");

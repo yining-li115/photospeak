@@ -20,6 +20,7 @@
  *     after body parsing.
  */
 import type { Context, MiddlewareHandler } from 'hono';
+import { getConnInfo } from '@hono/node-server/conninfo';
 
 interface Bucket {
   count: number;
@@ -51,6 +52,8 @@ function maybeSweep(name: string, store: Map<string, Bucket>, now: number): void
 export interface ConsumeResult {
   ok: boolean;
   retryAfterSec: number;
+  count: number;
+  max: number;
 }
 
 /**
@@ -79,21 +82,27 @@ export function rateLimitConsume(opts: {
     return {
       ok: false,
       retryAfterSec: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)),
+      count: bucket.count,
+      max: opts.max,
     };
   }
-  return { ok: true, retryAfterSec: 0 };
+  return { ok: true, retryAfterSec: 0, count: bucket.count, max: opts.max };
 }
 
 export interface RateLimitOptions {
   /** Bucket name — unique per route + scope. */
   name: string;
   windowMs: number;
-  max: number;
+  max: number | ((c: Context) => number | Promise<number>);
+  /** Log when this many requests are reached without blocking the caller. */
+  softLimit?: number | ((c: Context) => number | Promise<number>);
   /** Return the bucket key (user id, IP, phone, ...). Return null /
    *  empty to skip the limit (e.g. when the caller is unidentifiable). */
   keyFn: (c: Context) => string | null | undefined | Promise<string | null | undefined>;
   /** Override the 429 message; defaults to a generic Chinese string. */
   message?: string;
+  /** Stable machine-readable error code for clients. */
+  code?: string;
 }
 
 export function rateLimit(opts: RateLimitOptions): MiddlewareHandler {
@@ -107,12 +116,32 @@ export function rateLimit(opts: RateLimitOptions): MiddlewareHandler {
       name: opts.name,
       key,
       windowMs: opts.windowMs,
-      max: opts.max,
+      max:
+        typeof opts.max === 'function' ? await opts.max(c) : opts.max,
     });
+    const softLimit =
+      typeof opts.softLimit === 'function'
+        ? await opts.softLimit(c)
+        : opts.softLimit;
+    if (softLimit && result.count === softLimit) {
+      console.warn(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: 'rate_limit.soft_threshold',
+          bucket: opts.name,
+          key,
+          count: result.count,
+          hardLimit: result.max,
+        })
+      );
+    }
     if (!result.ok) {
       c.header('Retry-After', String(result.retryAfterSec));
       return c.json(
-        { error: opts.message ?? '请求过于频繁，请稍后再试' },
+        {
+          error: opts.message ?? '请求过于频繁，请稍后再试',
+          ...(opts.code ? { code: opts.code } : {}),
+        },
         429
       );
     }
@@ -120,12 +149,33 @@ export function rateLimit(opts: RateLimitOptions): MiddlewareHandler {
   };
 }
 
-/** Best-effort client IP. Trusts `x-forwarded-for` / `x-real-ip` set
- *  by the nginx reverse proxy in front of the Hono app. */
-export function clientIp(c: Context): string {
-  return (
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-    c.req.header('x-real-ip') ||
-    'unknown'
-  );
+/**
+ * Best-effort client IP. Forwarding headers are attacker-controlled unless
+ * the Node process is reachable only through a trusted reverse proxy, so they
+ * are ignored by default. Set TRUST_PROXY=true only with that network setup.
+ */
+export function clientIp(
+  c: Context,
+  options: { trustProxy?: boolean } = {}
+): string {
+  if (options.trustProxy) {
+    // PhotoSpeak currently supports exactly one trusted edge proxy. Read the
+    // right-most hop: with nginx's common append behaviour, any client-spoofed
+    // values stay to the left while the proxy-observed peer is appended last.
+    // Multi-hop/CDN deployments must normalize the header at the edge or move
+    // this policy to an explicit trusted-hop count.
+    const forwardedParts = c.req.header('x-forwarded-for')
+      ?.split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const forwarded = forwardedParts?.[forwardedParts.length - 1];
+    if (forwarded) return forwarded;
+    const real = c.req.header('x-real-ip');
+    if (real) return real;
+  }
+  try {
+    return getConnInfo(c).remote.address || 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }

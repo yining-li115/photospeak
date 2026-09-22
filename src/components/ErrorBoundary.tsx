@@ -5,7 +5,9 @@
  * minimal recovery screen.
  */
 import { Component, type ReactNode } from 'react';
+import * as Sentry from '@sentry/react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { isDiagnosticsEnabled } from '../privacy/diagnostics';
 import { colors, radius, spacing, text } from '../theme';
 
 interface Props {
@@ -24,10 +26,13 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: { componentStack?: string }) {
-    // If Sentry is configured at the app root it will pick this up
-    // automatically via the beforeSend hook; we still log here so dev
-    // build users see it in Metro console too.
-    // eslint-disable-next-line no-console
+    if (isDiagnosticsEnabled()) {
+      Sentry.captureException(error, {
+        contexts: {
+          react: { componentStack: errorInfo.componentStack ?? '' },
+        },
+      });
+    }
     console.error('[ErrorBoundary]', error, errorInfo.componentStack);
   }
 

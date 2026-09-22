@@ -16,6 +16,8 @@ module.exports = {
       instances: 1,
       autorestart: true,
       max_memory_restart: '256M',
+      // Must exceed the application's 75s graceful-drain hard timeout.
+      kill_timeout: 80000,
       env: {
         NODE_ENV: 'production',
       },

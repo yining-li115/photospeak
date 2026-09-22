@@ -7,7 +7,7 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -22,7 +22,12 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { backendPublicDocumentUrl } from '../../src/api/backend';
 import { useAuth } from '../../src/context/auth';
+import {
+  readCurrentConsent,
+  recordCurrentConsent,
+} from '../../src/privacy/consent';
 import { colors } from '../../src/theme';
 
 const { height: SCREEN_H } = Dimensions.get('window');
@@ -30,32 +35,59 @@ const { height: SCREEN_H } = Dimensions.get('window');
 export default function WelcomeScreen() {
   const { loginWithApple } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [agreed, setAgreed] = useState(false);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [hasConsent, setHasConsent] = useState(false);
+  const [modalAccepted, setModalAccepted] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [pendingAction, setPendingAction] = useState<'apple' | 'phone' | null>(
     null
   );
 
+  useEffect(() => {
+    let active = true;
+    readCurrentConsent().then((receipt) => {
+      if (active && receipt) setHasConsent(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function requireAgreement(action: 'apple' | 'phone') {
-    if (agreed) executeAction(action);
+    if (hasConsent) executeAction(action);
     else {
       setPendingAction(action);
+      setModalAccepted(false);
       setShowPrivacy(true);
     }
   }
 
-  function onAgree() {
-    setAgreed(true);
-    setShowPrivacy(false);
-    if (pendingAction) {
-      executeAction(pendingAction);
-      setPendingAction(null);
+  function openConsentDialog() {
+    setPendingAction(null);
+    setModalAccepted(hasConsent);
+    setShowPrivacy(true);
+  }
+
+  async function onAgree() {
+    if (consentSaving || !modalAccepted) return;
+    setConsentSaving(true);
+    try {
+      await recordCurrentConsent();
+      setHasConsent(true);
+      setShowPrivacy(false);
+      if (pendingAction) {
+        executeAction(pendingAction);
+        setPendingAction(null);
+      }
+    } catch {
+      Alert.alert('无法保存隐私选择', '请检查设备存储后重试');
+    } finally {
+      setConsentSaving(false);
     }
   }
 
   function executeAction(action: 'apple' | 'phone') {
     if (action === 'apple') handleAppleLogin();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (action === 'phone') router.push('/(auth)/phone' as any);
   }
 
@@ -72,7 +104,14 @@ export default function WelcomeScreen() {
       if (!credential.identityToken) {
         throw new Error('Apple 登录未返回 identityToken');
       }
-      await loginWithApple(credential.identityToken, credential.fullName);
+      if (!credential.authorizationCode) {
+        throw new Error('Apple 登录未返回 authorizationCode');
+      }
+      await loginWithApple(
+        credential.identityToken,
+        credential.authorizationCode,
+        credential.fullName
+      );
     } catch (err) {
       const e = err as { code?: string; message?: string };
       if (e.code !== 'ERR_REQUEST_CANCELED') {
@@ -81,6 +120,19 @@ export default function WelcomeScreen() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function openLegalDocument(document: 'privacy' | 'terms' | 'support') {
+    let url: string;
+    try {
+      url = backendPublicDocumentUrl(document);
+    } catch {
+      Alert.alert('暂时无法打开', '后端地址未配置，请联系支持人员');
+      return;
+    }
+    void Linking.openURL(url).catch(() => {
+      Alert.alert('暂时无法打开', '请检查网络后重试');
+    });
   }
 
   return (
@@ -104,6 +156,7 @@ export default function WelcomeScreen() {
             <Pressable
               style={({ pressed }) => [
                 s.loginCircle,
+                !hasConsent && s.loginCirclePending,
                 pressed && { opacity: 0.85 },
               ]}
               onPress={() => requireAgreement('apple')}
@@ -115,6 +168,7 @@ export default function WelcomeScreen() {
           <Pressable
             style={({ pressed }) => [
               s.loginCircle,
+              !hasConsent && s.loginCirclePending,
               pressed && { opacity: 0.85 },
             ]}
             onPress={() => requireAgreement('phone')}
@@ -124,12 +178,31 @@ export default function WelcomeScreen() {
           </Pressable>
         </View>
 
-        <Text style={s.privacy}>
-          登录即代表同意{' '}
-          <Text style={s.privacyLink} onPress={() => setShowPrivacy(true)}>
-            用户协议与隐私政策
+        <View style={s.consentRow}>
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: hasConsent }}
+            accessibilityLabel="同意用户协议与隐私政策"
+            onPress={openConsentDialog}
+            hitSlop={8}
+          >
+            <Ionicons
+              name={hasConsent ? 'checkbox' : 'square-outline'}
+              size={18}
+              color={hasConsent ? colors.accent : colors.textTertiary}
+            />
+          </Pressable>
+          <Text style={s.privacy}>
+            登录或注册前，请阅读并同意
+            <Text style={s.privacyLink} onPress={() => openLegalDocument('terms')}>
+              《用户协议》
+            </Text>
+            和
+            <Text style={s.privacyLink} onPress={() => openLegalDocument('privacy')}>
+              《隐私政策》
+            </Text>
           </Text>
-        </Text>
+        </View>
       </View>
 
       {/* Privacy modal */}
@@ -144,9 +217,10 @@ export default function WelcomeScreen() {
               </Text>
               <Text style={m.heading}>二、隐私保护</Text>
               <Text style={m.body}>
-                1. 您选择的照片、录音、生成的英语稿件属于您个人内容，仅在您的设备本地存储和服务器之间传输。{'\n'}
-                2. 我们仅收集您的 Apple ID 或手机号用于账号验证。语音、照片、文本会加密传输至 MiMo（小米）和阿里云 DashScope 用于 AI 分析与语音生成；服务商不会将其用于模型训练。{'\n'}
-                3. 您可以随时注销账号，注销后数据将在 7 天冷静期后删除。
+                1. 您选择的照片、录音和生成的学习内容默认保存在您的设备上；为完成识别、分析和语音合成，必要内容会发送到我们的服务器及隐私政策中列明的 AI 服务商。{'\n'}
+                2. 我们仅按功能所需处理账号与学习数据，并使用加密连接传输。为避免断网重试造成重复调用，分析和追问结果会加密缓存最多 72 小时，合成语音最多 24 小时；请求中的照片、录音和转写正文不会写入长期运维记录。具体服务商、处理目的和保留期限以完整隐私政策为准。{'\n'}
+                3. 崩溃、错误与少量性能诊断默认关闭。登录后，您可以在 Account 中自愿开启；诊断不包含照片、录音、转写、AI 正文或认证请求内容。{'\n'}
+                4. 您可以随时注销账号；冷静期结束后，我们会按隐私政策删除账号及关联云端数据，并立即清除本机对应账号的数据。
               </Text>
               <Text style={m.heading}>三、用户行为规范</Text>
               <Text style={m.body}>
@@ -167,11 +241,26 @@ export default function WelcomeScreen() {
                   heyyiru@gmail.com
                 </Text>
               </Text>
+              <View style={m.legalLinks}>
+                <Text
+                  style={m.legalLink}
+                  onPress={() => openLegalDocument('privacy')}
+                >
+                  查看完整隐私政策
+                </Text>
+                <Text
+                  style={m.legalLink}
+                  onPress={() => openLegalDocument('terms')}
+                >
+                  查看完整用户协议
+                </Text>
+              </View>
             </ScrollView>
             <View style={m.checkRow}>
               <Switch
-                value={agreed}
-                onValueChange={setAgreed}
+                value={modalAccepted}
+                onValueChange={setModalAccepted}
+                disabled={consentSaving}
                 trackColor={{ true: colors.accent, false: colors.separator }}
                 thumbColor="#FFF"
               />
@@ -180,19 +269,22 @@ export default function WelcomeScreen() {
             <Pressable
               style={({ pressed }) => [
                 m.agreeBtn,
-                !agreed && m.agreeBtnDisabled,
-                pressed && agreed && { opacity: 0.85 },
+                (!modalAccepted || consentSaving) && m.agreeBtnDisabled,
+                pressed && modalAccepted && !consentSaving && { opacity: 0.85 },
               ]}
               onPress={onAgree}
-              disabled={!agreed}
+              disabled={!modalAccepted || consentSaving}
             >
-              <Text style={m.agreeBtnText}>同意并继续</Text>
+              <Text style={m.agreeBtnText}>
+                {consentSaving ? '保存中…' : '同意并继续'}
+              </Text>
             </Pressable>
             <Pressable
               style={m.cancelBtn}
               onPress={() => {
                 setShowPrivacy(false);
                 setPendingAction(null);
+                setModalAccepted(false);
               }}
             >
               <Text style={m.cancelBtnText}>暂不同意</Text>
@@ -254,7 +346,20 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  privacy: { fontSize: 11, color: colors.textTertiary },
+  loginCirclePending: { opacity: 0.72 },
+  consentRow: {
+    maxWidth: 320,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  privacy: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 17,
+    color: colors.textTertiary,
+  },
   privacyLink: {
     color: colors.accentText,
     textDecorationLine: 'underline',
@@ -292,6 +397,19 @@ const m = StyleSheet.create({
   },
   body: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
   link: { color: colors.accentText, textDecorationLine: 'underline' },
+  legalLinks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 18,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  legalLink: {
+    color: colors.accentText,
+    fontSize: 13,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   checkRow: {
     flexDirection: 'row',
     alignItems: 'center',

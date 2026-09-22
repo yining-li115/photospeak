@@ -1,5 +1,11 @@
 # PhotoSpeak 系统性优化清单
 
+> **历史快照，不是当前部署说明。** 本文保留 2026-05 的决策背景，里面的
+> MiMo、legacy shared token、旧路由和文件行号可能已经失效。当前 AI 选型见
+> [ai-provider-selection.md](ai-provider-selection.md)，订阅/公平使用见
+> [subscription-policy.md](subscription-policy.md)，可执行后端 contract 见
+> [backend/README.md](../backend/README.md)。
+>
 > 快照时间：2026-05-12
 > 用途：用户量起来前的系统性优化路线图（**非功能性需求**：性能、安全、可观测、扩容）。每项都附文件位置和修复方向，按优先级排好，可逐项勾选推进。
 > 命名规则：项目编号 (S1, P1, Q1...) 是稳定 ID，跨 Phase 引用时用编号。
@@ -24,7 +30,7 @@
 | **P26** · TTS 并行生成 | confirm-generate 步骤现在 N 句话顺序调 N 次 TTS，10–30s | 并行后 → 2–4s（≈ 单次 TTS 时间），用户感知瞬间出结果 |
 | **P18**（analyze SSE 子项）| analyze 现在 buffer-and-return，3-5s 空白屏 | SSE 流式 → 500ms 看到首字，体感秒回 |
 
-两项独立，但建议**分两次发**：先 P26（改动小、风险低）→ 用 Sentry 看一周 429 分布 → 再 P18（涉及客户端流式 JSON 解析，需要更仔细）。开始前先 MiMo 控制台确认 QPM 配额或跑探测脚本。
+两项独立，但建议**分两次发**：先 P26（改动小、风险低）→ 用 Sentry 看一周 429 分布 → 再 P18（涉及客户端流式 JSON 解析，需要更仔细）。开始前先在当前供应商控制台确认 QPM 配额或跑探测脚本。
 
 ## ✅ 已完成
 
@@ -33,13 +39,13 @@
 | **P1（客户端部分）** · Sentry 接入 | 2026-05-12 | DSN 配上、`Sentry.init` 跑起来；关键 catch 加 `captureException` 带 `area:/stage:` tag（recorder.start / session / transcribe / analyze / chat / pick）。**剩余**：source map plugin、APM、业务面板（Phase 2 收尾时做） |
 | **错误提示中文化** | 2026-05-12 | 转写 / 分析 / 对话 / 录音保存 / 选图 5 处 `Alert.alert` 从英文 + 原始 err.message 改成短中文提示；原始错误进 `console.warn` + Sentry 留给开发者 |
 | **录音键并行 buffer + re-entry guard** | 2026-05-12 | 修 Build 7 上线后用户报告的"按下没反应连点"bug；audio 录制和 WS 握手并行启动，PCM 帧在 WS 没开好前进 buffer，开好后一次性 flush；start() 加单飞防御 |
-| **STT streaming**（P3 的 transcribe 子项）| 2026-05-12 | 客户端直连 DashScope `paraformer-realtime-v2` WebSocket + backend 签短期 token；transcribe 路径上 backend 不再接触音频字节，停录到看见文本从 4–10s 降到 < 1s |
+| **STT streaming**（P3 的 transcribe 子项）| 2026-09-22 | 客户端连接 PhotoSpeak 受限 WebSocket relay；火山 Seed ASR 2.0 凭据和二进制协议只在服务端 adapter；音频严格 70 秒，连接 105 秒留出握手/结尾识别，并有并发与背压限制 |
 | **S2** · `/api/*` 加 zod 校验 + body 大小限制 | 2026-05-09 | 顺手做掉 Q2（routes 抽到 `routes/proxy.ts`）|
 | **S3** · CORS 收紧 | 2026-05-09 | 直接移除 wildcard——mobile 不需要、公开 HTML 也用不上 |
 | **S4** · 全局错误处理 | 2026-05-09 | Hono `onError` + 进程级 fatal handler；不 swallow，让 PM2 重启 |
 | **S5** · 限流（关键端点） | 2026-05-09 | 内存固定窗口；P2 Redis 落地后切换。每日配额留给 P16 |
 | **P6** · PG 连接池（部分）| 2026-05-09 | max 10→15；pgbouncer 等 2c4g+ 再做 |
-| **P7** · 数据库备份（本机层）| 2026-05-09 | cron `pg_dump` + 7 天 retention；OSS 异地备份等 P3/P12 |
+| **P7** · 数据库备份 | 2026-09-19 | 原子 `pg_dump` + 可读性校验 + private SSE-KMS OSS 异地副本 + 失败告警接口；上线仍须配置 bucket lifecycle 与定期 restore drill |
 | **P10** · 删除客户端 OpenAI fallback | 2026-05-09 | 客户端不再持有任何上游 API key |
 | **Q2** · `/api/*` 抽到 `routes/proxy.ts` | 2026-05-09 | 随 S2 一起做 |
 
@@ -62,7 +68,7 @@
   └─ Background Jobs         邮件 / 推送 / 定时清理 / 备份
         ↓
 [LLM Gateway]                 多 provider 路由 + 降级 + Token 计费
-   → MiMo / DashScope / Claude / GPT / Gemini ...
+   → Volcengine / Claude / GPT / Gemini ...
         ↓
 [Data]
   ├─ PostgreSQL              业务数据（用户 / session / card）
@@ -114,7 +120,7 @@
 - [x] 路由抽到 [backend/src/routes/proxy.ts](../backend/src/routes/proxy.ts)（顺手把 Q2 做了）
 - **文件**：[backend/src/routes/proxy.ts](../backend/src/routes/proxy.ts)、[backend/src/index.ts:73-82](../backend/src/index.ts#L73-L82)
 - **关键收紧点**：
-  - `model` 字段用 `z.literal()` 锁定为我们客户端实际发的值（`qwen3-asr-flash` / `mimo-v2.5` / `mimo-v2.5-tts`），堵掉"用我们的代理刷其他 MiMo / OpenAI 模型"的滥用面
+  - 当前实现不接受客户端指定 model；服务端 provider adapter 与环境配置锁定实际模型，防止利用代理调用任意上游模型
   - 未识别字段被 zod 默认行为静默丢弃（`stream`、`tools` 之类塞进来不会被转发到上游）
   - 字符串 / 数组 / 数字都加了上界，配合 bodyLimit 形成两道闸
 - **遗留**：未来 P14 LLM Gateway 起来后，schema + 路由应迁过去，`fetch` 直接调用消失。
@@ -171,20 +177,20 @@
 - [ ] 客户端轮询或 SSE 监听完成事件
 - **文件**：当前 [backend/src/index.ts:80-120](../backend/src/index.ts#L80-L120) 是同步 `await fetch(upstream)`
 - **问题**：上游 LLM 5–30s 期间每个请求占 TCP 连接 + Node socket + audio buffer。1000 并发 = 单机直接 OOM；上游配额也会同时被打爆。
-- **修复方向**：API 进程只负责入队和查询，不再持有上游连接。worker 数量显式控制上游并发上限（比如 30 worker = 永远 ≤30 个 MiMo 并发），自然规避上游限流。这一项是后面所有扩容动作的前提。
+- **修复方向**：API 进程只负责入队和查询，不再持有上游连接。worker 数量显式控制上游并发上限（比如 30 worker = 永远 ≤30 个上游并发），自然规避供应商限流。这一项是后面所有扩容动作的前提。
 
 ### P3 · 音频走 OSS presigned URL（仅剩 TTS / 用户录音存档场景）
-- [x] **transcribe 路径**（2026-05-12 完成）：客户端直连 DashScope `paraformer-realtime-v2` WebSocket，backend 只签短期 token（`POST /api/transcribe/token`），全程不接触音频字节。这是 P3 的最大头，已 ship。
-- [ ] **TTS 输出**：MiMo TTS 生成的 base64 仍走 backend → 客户端写本地。改造方向：backend 直接把生成结果落 OSS，返回签名 URL；和 P4（TTS 缓存）+ P24（客户端云优先存储）合并做。
+- [x] **transcribe 路径**（2026-09-22 火山迁移）：`POST /api/transcribe/session` 只签发 15 秒、一次性的站内 relay ticket；客户端把 PCM 发给 PhotoSpeak relay，再由 provider adapter 连接 Seed ASR 2.0 优化双向流。provider key 不暴露给移动端。当前 ticket 存在单进程内存中，多实例上线前必须迁到 Redis 或启用严格粘性路由。
+- [ ] **TTS 输出**：当前 TTS adapter 的 base64 仍走 backend → 客户端写本地。改造方向：backend 直接把生成结果落 OSS，返回签名 URL；和 P4（TTS 缓存）+ P24（客户端云优先存储）合并做。
 - [ ] **用户录音文件**：当前 WAV 落本地磁盘，未来要不要存档到云端是 Q4（数据上云策略决策）的子集。
-- **文件**：[backend/src/routes/transcribe.ts](../backend/src/routes/transcribe.ts)（新加的 token 签发）、[src/api/aliyun-asr.ts](../src/api/aliyun-asr.ts)（WS 客户端）、[src/hooks/useAudioRecorder.ts](../src/hooks/useAudioRecorder.ts)（PCM tee）
+- **文件**：[backend/src/routes/transcribe.ts](../backend/src/routes/transcribe.ts)（ticket 签发）、[backend/src/transcription](../backend/src/transcription)（relay 与 provider adapter）、[src/api/streaming-asr.ts](../src/api/streaming-asr.ts)（WS 客户端）、[src/hooks/useAudioRecorder.ts](../src/hooks/useAudioRecorder.ts)（PCM tee）
 - **历史问题**：音频 base64 整块进后端内存。1000 并发 × 5MB ≈ 5GB 内存峰值。
 - **现状**：transcribe 体感延迟从 4–10s 降到 < 1s，backend 内存峰值不再随 transcribe 并发数膨胀（一次 token 签发是 ~200 字节 JSON）。剩下两个子项体量小，跟着 P4/P24 一起做即可。
 
 ### P4 · TTS 结果缓存
 - [ ] 计算 `key = sha256(text + voice_id + model)`
-- [ ] 命中 OSS 直接返回 URL；未命中调 MiMo TTS、写 OSS、入缓存索引（PG 表或 Redis）
-- **文件**：[src/api/mimo-tts.ts](../src/api/mimo-tts.ts)、[backend/src/index.ts:109-120](../backend/src/index.ts#L109-L120)
+- [ ] 命中 OSS 直接返回 URL；未命中调当前 TTS adapter、写 OSS、入缓存索引（PG 表或 Redis）
+- **文件**：[src/api/tts.ts](../src/api/tts.ts)、[backend/src/ai](../backend/src/ai)
 - **问题**：同样的 chunk 例句被 100 个用户学就 TTS 100 次，纯浪费。
 - **修复方向**：跑一段时间后命中率会很高，TTS 配额压力降一个数量级。Whisper / 分析无法这样缓存（输入因人而异），但 TTS 必须缓存。
 
@@ -209,7 +215,7 @@
 - [ ] 长期迁 Aliyun RDS（自动快照 + 时间点恢复）——P11 一并做
 - **文件**：[backend/scripts/backup.sh](../backend/scripts/backup.sh)、[backend/README.md](../backend/README.md)
 - **当前防什么**：误 DROP TABLE、migration 跑坏、人为误改数据 → 7 天内可恢复
-- **当前不防**：LAS 物理损坏 / 整盘抹除 → 备份和数据库在同一块磁盘上，OSS 异地备份接上后才完整
+- **当前门槛**：脚本已支持并默认强制 OSS SSE-KMS 异地副本；真正上线前必须配置 OSS 凭据、生命周期、失败告警，并完成一次下载与 disposable DB restore drill
 
 ### P8 · 日志结构化 + 轮转
 - [ ] `console.log` 替换为 pino（或类似）
@@ -227,8 +233,8 @@
 
 ### P10 · 删除客户端 OpenAI fallback ✅（2026-05-09）
 - [x] [src/api/whisper.ts](../src/api/whisper.ts)：移除 `EXPO_PUBLIC_OPENAI_API_KEY` 分支；endpoint 未配置时直接抛错（不再 fallback 到 OpenAI 公网）
-- [x] [src/api/stt.ts](../src/api/stt.ts)：默认 provider 从 `whisper` 翻成 `aliyun-qwen`，只有显式设 `EXPO_PUBLIC_STT_PROVIDER=whisper` 才走本地 dev path
-- [x] [.env.example](../.env.example)：删除 `EXPO_PUBLIC_OPENAI_API_KEY` + `EXPO_PUBLIC_DASHSCOPE_API_KEY` 字段，加 deprecation 说明
+- [x] [src/api/stt.ts](../src/api/stt.ts)：默认 provider 为 `backend-streaming`，只有显式设 `EXPO_PUBLIC_STT_PROVIDER=whisper` 才走本地 dev path；旧内测值仍安全映射到 backend 便于 OTA 过渡
+- [x] [.env.example](../.env.example)：客户端环境只保留 provider 名和 backend URL；所有生产 AI key 均只存在于 backend 环境
 - **文件**：[src/api/whisper.ts](../src/api/whisper.ts)、[src/api/stt.ts](../src/api/stt.ts)、[.env.example](../.env.example)
 - **保留**：`whisper.ts` 还在仓库里，但只服务于本地 dev（用户在 Mac 跑 `scripts/local_whisper_server.py`）。production 走 backend 代理永远到不了这条路径。
 
@@ -278,14 +284,14 @@
 - [ ] Sentry tag：`area:session.generate.tts` + `stage:rate-limit / network / unknown`，按 stage 切片看分布
 - **问题**：当前 N 句话顺序调 N 次 TTS，总时间 ≈ N × 单次延迟 = 10–30s。用户点 confirm 之后干等的最大头
 - **预期收益**：N 句话 → 并行后总时间 ≈ 单次 TTS（2-4s），**3-5 倍提速**
-- **风险点**：并发打满 MiMo 单 key 的 QPM
+- **风险点**：并发打满当前 TTS 供应商 key 的 QPM
   - 20 用户峰值同时 generate × 6-8 句 = 瞬时 ~50 QPS，可能撞默认 60 QPM
   - 防御：单用户并发上限 + 429 退避；起步 `pLimit(3)` 保守，看 Sentry 一周决定要不要调到 5-6
-  - 撞了的话同时推 [P13](#p13--上游并发配额谈判)（找 MiMo 提配额）
+  - 撞了的话同时推 [P13](#p13--上游并发配额谈判)（向当前供应商申请配额）
 - **跟 P18 的关系**：P18（流式 analyze）解决 analyze 那段卡顿，P26 解决 generate 那段，两个独立。两个都做完，用户从 transcribe → analyze → generate 整条线没有任何"卡死"体感
 
 ### P13 · 上游并发配额谈判
-- [ ] 联系 MiMo / DashScope 提升并发 quota
+- [ ] 联系火山引擎提升图文、TTS 与 Seed ASR 并发 quota
 - [ ] 评估是否需要多 key 分片（不同 user 落到不同 key）
 - **问题**：上游配额是真正的硬天花板，技术再好也突破不了。
 - **修复方向**：先量化当前配额（接 P1 后能看到），再和供应商谈下一档。多 key 分片是兜底方案，但运营复杂度上升，能不上就不上。
@@ -300,11 +306,11 @@
 - **修复方向**：参考开源实现 [LiteLLM](https://github.com/BerriAI/litellm) / [Portkey](https://portkey.ai/) / [Helicone](https://helicone.ai/) 的接口形状，但内部精简到只支持当前需要的 provider。先抽象出来，多 provider 路由（P15）可以稍后填充。
 
 ### P15 · 多 provider 路由 + 降级
-- [ ] 主备 provider 表：MiMo 失败自动切到（例如）Qwen / 智谱
+- [ ] 主备 provider 表：当前主供应商失败时切到经过同一评测集验证的备用供应商
 - [ ] 按业务分级路由：分析用强模型、TTS 用专用模型、未来轻量分类用便宜模型
 - [ ] 熔断：某 provider 错误率 5 分钟超 20% → 自动切备用
 - **依赖**：P14 完成
-- **问题**：当前单 provider 单点故障；MiMo 一抖 PhotoSpeak 全挂。
+- **问题**：当前图文能力仍是单 provider 单点故障；供应商抖动会影响 PhotoSpeak。
 - **修复方向**：在 LLM Gateway 内部维护 provider 健康状态，路由表用配置（接 P21 prompt/模型外置后可热更）。
 
 ### P16 · Per-user 每日配额（成本上限）
@@ -323,13 +329,13 @@
 - **修复方向**：和 AI worker 共用 Redis + BullMQ，但 queue 名分开，便于独立扩缩容。
 
 ### P18 · 流式输出（SSE）⭐ 下次 sprint
-- [ ] **analyze 路径 SSE 化**（**优先做**）：后端 `/api/analyze` 把上游 MiMo 的 chunked / SSE 响应透传给客户端；客户端用 `react-native-sse` 边接边渲染
+- [ ] **analyze 路径 SSE 化**（**优先做**）：后端把当前图文 adapter 的 chunked / SSE 响应转换为稳定的站内事件协议；客户端边接边渲染
 - [ ] chat 跟进同样改成 SSE（同一套基础设施）
-- [ ] TTS 走 MiMo / ElevenLabs 流式接口（产生即播）—— **延后**，先做 P26 并行更划算
+- [ ] TTS 走供应商流式接口（产生即播）—— **延后**，先做 P26 有界并行更划算
 - **依赖**：理论上等 P14 LLM Gateway 抽出来更干净，但 analyze 一条线可以直接改不必等
 - **问题**：当前是 buffer-and-return，3-5 秒响应 = 3-5 秒空白屏。用户当下"卡住"体感的另一半（generate 那一半归 P26）
 - **修复方向**：分两步走——先 analyze SSE 文本流（这次 sprint），再 audio 流式合成（更复杂，可延后到 P14 之后）
-- **客户端边界**：MiMo 的流式 chunk 是部分 JSON，需要容错解析（chunk 边界可能切在 JSON 中间）。可参考 `eventsource-parser` 或自己写一个小 buffer-and-decode
+- **客户端边界**：供应商流式 chunk 可能切在 JSON 中间；应由服务端 adapter 完成容错解析并输出稳定站内事件，客户端不要直接绑定供应商格式
 
 ### P19 · 成本作为一等指标
 - [ ] LLM Gateway 每次调用落库 `(user_id, request_id, model, input_tokens, output_tokens, cost_cents)`
@@ -448,7 +454,7 @@ P16（per-user 配额）→ P19（成本面板）→ P20（内容安全）→ P1
 各项做完的标志：
 - P16 + P19：能回答"哪个用户最贵 / 今天总花了多少 / 谁在滥用"
 - P20：能在 App Store / 政策审核中通过内容合规问题
-- P15：MiMo 抖动 30 秒不影响用户
+- P15：主供应商抖动 30 秒不影响用户
 - P18：用户感知首字节延迟从 3s 降到 < 500ms
 - P22：客服不用 SSH 改库就能处理用户问题
 

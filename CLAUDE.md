@@ -1,331 +1,168 @@
-# PhotoSpeak — CLAUDE.md
+# PhotoSpeak engineering guide
 
-This file gives you everything you need to work on this project. Read it fully before writing any code.
+PhotoSpeak is a local-first Expo/React Native English-speaking practice app.
+A learner chooses a photo, speaks for 60 seconds, gets a clearly signalled
+10-second grace period, and is stopped at 70 seconds. The app transcribes the
+speech, asks a multimodal model for corrections and a polished version, then
+generates sentence audio and FSRS review cards after explicit confirmation.
 
-> **Roadmap & known tech debt:** see [`docs/optimization.md`](docs/optimization.md) for the current optimization plan, severity-tiered findings, and Phase ordering. Anything marked TODO there shouldn't be re-derived from this file — check the roadmap first.
+Read this file before changing the project. Current operational details live in
+[`backend/README.md`](backend/README.md); provider and product decisions live in
+[`docs/ai-provider-selection.md`](docs/ai-provider-selection.md) and
+[`docs/subscription-policy.md`](docs/subscription-policy.md). The older
+[`docs/optimization.md`](docs/optimization.md) is a historical audit, not the
+runtime contract.
 
----
+## Architecture boundaries
 
-## What This App Does
-
-PhotoSpeak is a mobile English speaking practice app. Every day, the user picks a photo from their phone, records ~1 minute of English describing it, and the app automatically:
-1. Transcribes the recording
-2. Sends photo + transcript to an LLM for correction, polishing, and chunk extraction
-3. Lets the user review results and chat with AI in a session interface
-4. On user confirmation, generates per-sentence TTS audio and creates SRS flashcards
-
-The goal is a seamless, zero-friction daily learning loop.
-
----
-
-## Tech Stack
-
-| Layer | Choice | Notes |
-|-------|--------|-------|
-| Mobile framework | React Native + Expo | iOS + Android, one codebase |
-| Audio recording | `@siteed/audio-studio` | Records to WAV file on disk AND tees PCM frames to the streaming STT WebSocket — both at once, see [src/hooks/useAudioRecorder.ts](src/hooks/useAudioRecorder.ts). |
-| Photo library access | expo-image-picker | Cross-platform |
-| Pipeline orchestration | Plain async/await in `src/services/generate.ts` | No framework — linear flow, easy to debug |
-| STT | Aliyun DashScope `paraformer-realtime-v2` (streaming WebSocket) **or** local Whisper (dev only) | Switchable via `EXPO_PUBLIC_STT_PROVIDER`. Client connects directly to DashScope using a short-lived token signed by `POST /api/transcribe/token`; audio bytes never transit the backend. |
-| LLM analysis | MiMo (`api.xiaomimimo.com/v1/chat/completions`) | Vision + language, structured JSON output |
-| TTS | MiMo TTS (same chat/completions endpoint, audio response) | Per-sentence, returns base64 |
-| SRS algorithm | FSRS (`ts-fsrs`) | Modern spaced repetition |
-| Local storage | expo-sqlite + expo-file-system | Offline-first; storage paths kept relative to documentDirectory |
-| Backend | Node.js + Hono + PostgreSQL (Drizzle ORM) | Deployed on Aliyun ECS via PM2. Hosts auth + acts as proxy for upstream LLM/STT/TTS APIs. |
-| Auth | Apple Sign-In + SMS code (Aliyun SMS), JWT access + refresh | Tokens stored in `expo-secure-store` |
-
----
-
-## Project Structure
-
-```
-photospeak/
-├── app/                            # Expo Router
-│   ├── (auth)/
-│   │   ├── welcome.tsx
-│   │   ├── phone.tsx
-│   │   └── verify.tsx
-│   ├── (tabs)/
-│   │   ├── sessions/{index,[id],_layout}.tsx
-│   │   ├── listening/{index,[id],_layout}.tsx
-│   │   ├── cards/{index,_layout}.tsx
-│   │   └── home/{index,_layout}.tsx
-│   ├── _layout.tsx
-│   └── index.tsx                   # Routing root (auth gate)
-│
-├── src/
-│   ├── api/                        # External API clients (production paths go via backend)
-│   │   ├── backend.ts              # Central fetch wrapper: auth header, 401 → refresh → retry
-│   │   ├── auth.ts                 # /auth/* client (apple, send-code, verify, refresh, me, logout)
-│   │   ├── stt.ts                  # Resolves EXPO_PUBLIC_STT_PROVIDER → 'aliyun-qwen' (default) or 'whisper' (dev)
-│   │   ├── aliyun-asr.ts           # `TranscriptionSession`: WebSocket client for DashScope paraformer-realtime-v2
-│   │   ├── mimo.ts                 # Calls backend /api/analyze (MiMo passthrough) + chat follow-up
-│   │   ├── mimo-tts.ts             # Calls backend /api/tts
-│   │   └── whisper.ts              # Dev-only batch path to a local Whisper server (not used in production)
-│   │
-│   ├── services/                   # Domain orchestration (pipeline lives here, not in /api)
-│   │   ├── generate.ts             # Confirm-Generate flow: TTS each sentence, persist, create cards
-│   │   ├── queue.ts                # Build player queue from session(s)
-│   │   └── delete.ts               # Soft delete + cascade cleanup
-│   │
-│   ├── context/
-│   │   ├── auth.tsx                # AuthContext: token state, login/logout, app-launch refresh
-│   │   └── player.tsx              # Audio player state
-│   │
-│   ├── db/                         # Local SQLite layer
-│   │   ├── schema.ts
-│   │   ├── sessions.ts
-│   │   ├── cards.ts
-│   │   └── stats.ts
-│   │
-│   ├── srs/
-│   │   └── fsrs.ts                 # ts-fsrs wrapper
-│   │
-│   ├── storage/                    # File system helpers
-│   │   ├── audio.ts
-│   │   ├── photos.ts
-│   │   ├── recordings.ts
-│   │   ├── picker.ts
-│   │   └── resolve.ts              # Resolves stored relative paths → absolute documentDirectory URIs
-│   │
-│   ├── hooks/{useAudioRecorder,useAudioPlayer,useSRSReview}.ts
-│   ├── components/                 # App-specific components (separate from /components Expo template UI)
-│   └── types/index.ts              # Shared TypeScript types
-│
-├── backend/                        # Hono + PostgreSQL backend
-│   ├── src/
-│   │   ├── index.ts                # App entry: CORS, auth routes, /api/* proxy routes
-│   │   ├── auth/
-│   │   │   ├── jwt.ts              # signToken / verifyToken (access + refresh)
-│   │   │   ├── middleware.ts       # requireAuth (allows legacy shared token), requireUser (strict)
-│   │   │   ├── apple.ts            # Apple Sign-In identity_token verification
-│   │   │   └── sms.ts              # Aliyun SMS send + verify
-│   │   ├── routes/auth.ts          # /auth/apple, /auth/send-code, /auth/verify, /auth/refresh, /auth/me, /auth/logout
-│   │   ├── db/{client,schema,migrate}.ts
-│   │   └── legal.ts                # /privacy + /terms HTML
-│   ├── drizzle/                    # SQL migrations
-│   ├── ecosystem.config.cjs        # PM2 config
-│   └── README.md                   # Deploy + ops notes
-│
-├── docs/
-│   ├── PhotoSpeak_PRD.md
-│   └── optimization.md             # ⭐ Roadmap + tech debt
-│
-├── assets/
-├── .env / .env.example             # Client env (never commit .env)
-└── CLAUDE.md                       # This file
+```text
+Expo app
+  |-- recorder state machine + owner-scoped SQLite/media
+  |-- provider-neutral domain requests
+  `-- PhotoSpeak access JWT / one-use ASR relay ticket
+                         |
+Hono backend            |-- session families + deletion sagas
+  |-- business DTOs -----|-- provider adapters + prompt/model policy
+  |-- usage/cost ledger  |-- constrained streaming-ASR relay
+  `-- PostgreSQL --------`-- recovery/retention jobs
 ```
 
----
+- The phone never receives an AI, speech, Apple-server, SMS, or database key.
+- Mobile callers submit domain operations; they cannot choose arbitrary model
+  IDs, prompts, voices, upstream URLs, or provider payloads.
+- AI text and speech are separate backend interfaces. Ark text/vision uses the
+  OpenAI-compatible adapter; Doubao TTS 2.0 uses its dedicated v3 HTTP adapter.
+- Production ASR audio goes through PhotoSpeak's constrained WebSocket relay.
+  A 15-second one-use ticket cannot be used against any other provider route.
+- Learning content is local-first. Request photos, recordings, transcripts and
+  prompts are not written to server tables. Encrypted AI responses are retained
+  only for the documented 24/72-hour retry window; longer-lived rows contain
+  hashes and operational metadata, not learning content.
 
-## Core Data Types
+## Important paths
 
-```typescript
-// src/types/index.ts (canonical — do not duplicate elsewhere)
+- `app/` — Expo Router screens and UI orchestration.
+- `src/hooks/useAudioRecorder.ts` — microphone/streaming-ASR lifecycle.
+- `src/recording/policy.ts` — the 60s target, 10s grace and 70s hard limit.
+- `src/audio/runtime.ts` — process-wide playback/recording exclusion.
+- `src/api/ai.ts`, `src/api/tts.ts` — provider-neutral mobile requests.
+- `src/api/backend.ts` — HTTPS client, atomic token storage, refresh/retry.
+- `src/context/auth.tsx` — identity and account-deletion orchestration.
+- `src/db/`, `src/storage/` — owner-scoped SQLite and managed media.
+- `src/services/generate.ts` — confirmation, TTS, persistence and card flow.
+- `backend/src/ai/` — provider contracts, validation and usage accounting.
+- `backend/src/auth/`, `backend/src/routes/auth.ts` — auth/session/deletion.
+- `backend/src/transcription/` — ticket and bounded WebSocket relay.
+- `backend/drizzle/` — append-only forward PostgreSQL migrations.
 
-export interface Session {
-  id: string
-  created_at: string
-  photo_uri: string                  // RELATIVE to documentDirectory
-  photo_thumbnail_uri: string        // RELATIVE
-  recording_uri: string              // RELATIVE
-  transcript: string
-  corrected_sentences: CorrectedSentence[]
-  polished_sentences: string[]       // per-sentence; maps to sentence_audio_uris by index
-  sentence_audio_uris: string[]      // RELATIVE
-  chunks: Chunk[]
-  chat_history: ChatMessage[]
-  podcast_generated: boolean
-  cards_generated: boolean
-}
+Mobile code imports only the provider-neutral `ai.ts` and `tts.ts` clients.
+Vendor model IDs, prompts, voices, and credentials stay behind backend
+adapters.
 
-export interface CorrectedSentence {
-  original: string
-  corrected: string
-  error_type: 'grammar' | 'vocabulary' | 'preposition' | 'article' | 'other'
-  explanation: string                // in Chinese for clarity
-  is_common_for_chinese_speakers: boolean
-}
+## Recording and generation invariants
 
-export interface Chunk {
-  id: string
-  chunk: string
-  usage_note: string                 // in Chinese
-  examples: ChunkExample[]
-}
+1. Recording and playback require process-wide leases and can never overlap.
+   An indeterminate native recorder quarantines the entire audio runtime until
+   stop is confirmed; late callbacks from an old operation cannot revive it.
+2. The recorder stops on background, screen loss, interruption or the 70-second
+   hard limit. Timing uses a monotonic clock, not render cadence.
+3. Source audio is PCM16, 16 kHz, mono. The relay enforces exactly 70 seconds by
+   byte count; its longer socket lifetime exists only for startup/finalization.
+4. `polished_sentences` stays an array. Each sentence maps by index to one TTS
+   audio file and one player item.
+5. TTS runs only after the user confirms the analysis. Partial generation is
+   retryable and bounded; persistence is owner- and account-epoch checked.
+6. Photos are compressed for analysis/storage. Do not put base64 media, audio
+   bytes or unbounded chat histories in SQLite or React state.
 
-export interface ChunkExample {
-  text: string
-  audio_uri: string                  // RELATIVE; currently empty — see Key Decisions
-}
+## Local data invariants
+
+- Every session, card, stat and generated artifact belongs to an explicit
+  owner. Never infer ownership from a mutable global after an `await`.
+- Persist managed paths relative to the Expo document root and resolve them at
+  the read boundary; absolute iOS container paths do not survive reinstalls.
+- Account deletion writes a durable tombstone before erasing files/rows. File
+  deletion is strict for account purge and retryable after a crash.
+- Ordinary session deletion may remove DB rows first and let the orphan janitor
+  finish best-effort media cleanup.
+- Completed history is never silently evicted. New writes stop at the managed
+  storage/free-space guard; cloud storage plus a bounded cache is future work.
+- List queries are paginated and decoded JSON is normalized/capped at the DB
+  boundary.
+
+## Authentication invariants
+
+- Access and refresh tokens live in one atomic SecureStore bundle. A logged-out
+  tombstone prevents old beta keys from resurrecting a session.
+- Refresh tokens rotate once within a revocable session family. Before a
+  refresh request leaves the phone, a UUID `Idempotency-Key` is persisted with
+  that exact old token. It is cleared only when replacement tokens commit.
+- Backend refresh replay is valid for the family's remaining absolute lifetime,
+  returns the same child refresh token plus a freshly signed access token, and
+  is removed after the child rotates successfully. A different key is reuse.
+- Every authenticated request checks the user and session. Provider failures
+  are 502/503, never an auth 401. Only `AUTH_ACCESS_EXPIRED` triggers refresh.
+- Account deletion first persists a dedicated deletion receipt on the phone,
+  then sends `DELETE /auth/me`. The receipt cannot access profile/AI routes and
+  remains verifiable across ordinary JWT-secret rotation.
+- Apple authorization codes are exchanged server-side. Every stored Apple
+  refresh credential is encrypted, revocable, recoverable after crashes, and
+  classified into transient, terminal-manual or completed deletion states.
+
+## Backend and deployment invariants
+
+- Validate bounded business DTOs at the route boundary. Never recreate a
+  generic authenticated provider proxy.
+- Do not hold a PostgreSQL transaction or pool connection across Apple/JWKS or
+  AI-provider network calls. Reserve/claim in a short transaction, call the
+  provider, then complete with compare-and-set state.
+- Recovery jobs use ordered claims, leases, `SKIP LOCKED`, bounded exponential
+  backoff and terminal states so poison work cannot starve newer rows.
+- In-memory relay tickets/rate/concurrency state require a singleton process or
+  sticky routing. Move them to Redis before horizontal API scaling.
+- Auth-protocol/schema releases use a maintenance window: build, stop old code,
+  migrate forward, start new code, smoke test. Never roll old/new auth semantics
+  together or automatically roll old code back after migrations begin.
+- Keep minimum iOS/Android build gates current before retiring a mobile
+  protocol.
+
+## Environment and secrets
+
+Copy the committed `.env.example` files locally. Never commit, print or inspect
+real `.env` files. Only public build configuration such as the backend base URL
+or Sentry DSN may use `EXPO_PUBLIC_*`; those values are embedded in the app.
+
+Provider/model/voice IDs and all credentials are backend configuration. There
+are no MiMo defaults or credential fallbacks. Exact required variables and key
+rotation procedures are documented in `backend/.env.example` and
+`backend/README.md`.
+
+## Verification
+
+```bash
+npm ci
+npm run typecheck
+npm run lint:ci
+npm run test:db
+
+cd backend
+npm ci
+npm run typecheck
+npm test
+npm run build
 ```
 
-**Storage path invariant**: all `*_uri` fields are stored *relative* to `FileSystem.documentDirectory`. iOS reinstalls / OTA updates change the absolute UUID prefix, which would break absolute paths. Always resolve via `src/storage/resolve.ts` at the read boundary.
+Tests must not call live AI/Apple/SMS services or load real environment files.
+Run migrations and operational smoke tests only in an explicitly configured
+staging environment.
 
----
+## Release blockers that code structure alone does not satisfy
 
-## Pipeline (current architecture)
-
-The pipeline is linear and lives in `src/services/generate.ts`. **No LangGraph or other framework** — plain async/await.
-
-**Phase A — recording → analysis** (runs while user waits, in `app/(tabs)/sessions/[id].tsx`):
-1. User picks photo, then taps record. The recorder hook ([src/hooks/useAudioRecorder.ts](src/hooks/useAudioRecorder.ts)) does two things in parallel: writes a WAV file to disk for replay, AND opens a WebSocket to DashScope `paraformer-realtime-v2` signed by a short-lived token from `POST /api/transcribe/token`. PCM 16-bit @ 16 kHz frames are teed from the mic into the WS as they arrive.
-2. User taps stop. The hook sends `finish-task` and stores the in-flight transcript Promise. The recording's WAV is now on disk.
-3. User taps "Transcribe" — handler awaits `recorder.getTranscript()`. By this point the Promise is usually already resolved (sub-second wait). Backend never saw audio bytes.
-4. `src/api/mimo.ts` → backend `/api/analyze` → MiMo → structured JSON (corrections + polished sentences + chunks)
-5. UI displays results as chat bubbles. Follow-up questions: each call sends full chat history + photo back through `/api/analyze`.
-
-**Phase B — confirm-generate** (runs only when user clicks "Confirm & Generate"):
-1. `src/services/generate.ts` loops over `polished_sentences`, calls `mimo-tts.ts` → backend `/api/tts` for each
-2. Each base64 audio response is written to file system via `src/storage/audio.ts`, returning a relative URI
-3. Session row persisted via `src/db/sessions.ts` (with all relative URIs)
-4. Cards created via `src/db/cards.ts` (one card per chunk)
-5. Stats bumped via `src/db/stats.ts`
-
-**Important constraints:**
-- `polished_sentences` must remain an array — each item becomes one TTS audio file. Do **not** merge them.
-- TTS runs **only after** user confirms — keeps cost down for abandoned sessions.
-- Use a single fixed voice (server-side `MIMO_VOICE_ID`) for consistency.
-- Chunk examples currently get **no audio** (text-only). The cards UI was simplified and per-example audio was dropped to save TTS calls. To reintroduce, add a second loop in `generate.ts`.
-
----
-
-## Backend Contract
-
-The backend has two roles:
-
-**1. Auth service** (`/auth/*`):
-- Apple Sign-In: `POST /auth/apple` with `identity_token`
-- Phone: `POST /auth/send-code` → `POST /auth/verify` (Aliyun SMS)
-- `POST /auth/refresh`, `GET /auth/me`, `POST /auth/logout`
-- Returns `{ access_token, refresh_token, user }`. Access token short-TTL, refresh long. Refresh tokens tracked in `refresh_tokens` for revocation.
-
-**2. Upstream proxy** (`/api/*`):
-- `POST /api/transcribe/token` → returns a 5-minute DashScope token. Client uses it to open a WebSocket to `paraformer-realtime-v2` directly. Strictly per-user JWT (no legacy fallback). See [backend/src/routes/transcribe.ts](backend/src/routes/transcribe.ts).
-- `POST /api/analyze` → MiMo chat completions (gated by `requireAuth`, zod schema, body limit)
-- `POST /api/tts` → MiMo TTS (gated by `requireAuth`, zod schema, body limit)
-
-Analyze + TTS use the legacy "thin proxy" pattern (still has `requireAuth` + zod + bodyLimit hardening). When adding new endpoints, prefer the token-issuance pattern from `transcribe.ts` over body proxying, and route through the LLM Gateway abstraction once it exists (P14).
-
-**Auth modes accepted:**
-- `/api/transcribe/*` — strict per-user JWT only (`requireUser`)
-- `/api/analyze` and `/api/tts` — per-user JWT OR legacy `APP_SHARED_TOKEN` bearer (still accepted for older client builds, scheduled for removal — see S1)
-
----
-
-## Database
-
-**Client-side (SQLite, `src/db/schema.ts`):**
-
-```sql
-CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,
-  created_at TEXT NOT NULL,
-  photo_uri TEXT NOT NULL,            -- relative
-  photo_thumbnail_uri TEXT NOT NULL,  -- relative
-  recording_uri TEXT NOT NULL,        -- relative
-  transcript TEXT,
-  corrected_sentences TEXT,           -- JSON
-  polished_sentences TEXT,            -- JSON array
-  sentence_audio_uris TEXT,           -- JSON array of relative paths
-  chunks TEXT,                        -- JSON
-  chat_history TEXT,                  -- JSON
-  podcast_generated INTEGER DEFAULT 0,
-  cards_generated INTEGER DEFAULT 0
-);
-
-CREATE TABLE cards (
-  id TEXT PRIMARY KEY,
-  chunk_id TEXT NOT NULL,
-  chunk TEXT NOT NULL,
-  usage_note TEXT NOT NULL,
-  examples TEXT NOT NULL,             -- JSON
-  photo_thumbnail_uri TEXT NOT NULL,  -- relative
-  source_session_id TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  next_review_at TEXT NOT NULL,
-  stability REAL DEFAULT 0,
-  difficulty REAL DEFAULT 0,
-  review_history TEXT DEFAULT '[]'
-);
-
-CREATE TABLE stats (
-  date TEXT PRIMARY KEY,              -- YYYY-MM-DD
-  session_count INTEGER DEFAULT 0,
-  listening_seconds INTEGER DEFAULT 0,
-  cards_reviewed INTEGER DEFAULT 0
-);
-```
-
-JSON columns: parse/stringify at the DB layer, expose typed objects everywhere else.
-
-**Server-side (PostgreSQL via Drizzle, `backend/src/db/schema.ts`):**
-
-Currently only `users` and `refresh_tokens`. Sessions / cards / stats live **only on the device**. Whether to sync them to the server is an open product decision — see optimization.md Q4.
-
----
-
-## Environment Variables
-
-**Client (`.env`, never commit):**
-```
-EXPO_PUBLIC_API_BASE=                # backend URL (currently HTTP IP, switching to https://api.dailyphotospeak.cn after ICP filing — S6)
-EXPO_PUBLIC_API_TOKEN=               # ⚠️ Legacy shared token — do not use in new code (S1)
-EXPO_PUBLIC_SENTRY_DSN=              # Optional; Sentry init is gated on this
-EXPO_PUBLIC_STT_PROVIDER=            # 'aliyun-qwen' (default, streaming WS) | 'whisper' (dev, local server)
-EXPO_PUBLIC_WHISPER_ENDPOINT=        # Required only when EXPO_PUBLIC_STT_PROVIDER=whisper — points at scripts/local_whisper_server.py
-```
-
-**Backend (`backend/.env`, never commit):**
-```
-DATABASE_URL=
-JWT_SECRET=                          # 32+ chars, no fallback
-MIMO_API_KEY=
-DASHSCOPE_API_KEY=
-APP_SHARED_TOKEN=                    # Legacy, will be removed
-APPLE_CLIENT_ID=                     # Apple Sign-In audience
-ALIYUN_SMS_*                         # SMS credentials
-```
-
-Never hardcode keys. Never log them. Never commit `.env`. Never read `.env` files via tool calls — values land in conversation history and need rotation.
-
----
-
-## Current State & Roadmap
-
-The original three-phase build plan (Core Pipeline → Generate & Play → SRS + Stats) is largely **complete**. Auth was added later (Apple + phone). The system is in production with growing usage.
-
-**For new work**, consult [`docs/optimization.md`](docs/optimization.md) — it lists everything currently broken or insufficient for scale, in priority order. Don't add features without first checking whether the surrounding area has open 🔴 / 🟡 items.
-
-In-flight concerns to keep in mind (full list in roadmap):
-- 🔴 Legacy `APP_SHARED_TOKEN` still accepted on `/api/analyze` + `/api/tts` (S1 — `/api/transcribe/*` is already strict per-user JWT)
-- 🟡 Synchronous proxy model for analyze + TTS — must move to async queue + LLM Gateway before serving 1000 concurrent users (P2 + P14). Transcribe already off this path.
-
----
-
-## Key Decisions & Constraints
-
-- **Per-sentence audio files**: TTS generates one file per sentence. Single-sentence looping is just a replay — no timeline scrubbing.
-- **Confirm before TTS**: TTS runs only after user confirms, avoiding wasted API cost on abandoned sessions.
-- **Fixed TTS voice**: One voice ID across all generations. Users calibrate to a single voice over time.
-- **Offline-first storage**: All audio files and session/card data live on device. Cloud sync is a future decision (Q4).
-- **Backend is a thin proxy + auth**: Upstream API keys live server-side; the backend authenticates and forwards. The forward path is slated to grow into a proper LLM Gateway (P14).
-- **Chat history**: Always send the full session chat history + photo to MiMo for follow-up questions. The model has no memory between calls.
-- **Photo thumbnail**: Resize to ~200x200px before storing and before sending to MiMo. Full-res photos are only used for display.
-- **Storage paths are relative**: see invariant note above. Always resolve via `src/storage/resolve.ts`.
-
----
-
-## Common Pitfalls to Avoid
-
-- Do not merge polished sentences into one string before TTS — keep them as an array.
-- Do not call TTS during the analysis step — only after user confirms.
-- Do not store audio files in SQLite — store relative paths only; bytes go in `expo-file-system`.
-- Do not write absolute file URIs into the DB — always relative to documentDirectory.
-- Do not expose API keys in any log output.
-- Do not add new `/api/*` endpoints by copying the existing passthrough pattern (see Backend Contract above) — add validation, prefer routing through the future LLM Gateway.
-- For new streaming / realtime endpoints, prefer the token-issuance pattern from [backend/src/routes/transcribe.ts](backend/src/routes/transcribe.ts) (backend signs short-lived upstream credential, client connects directly) over proxying long-lived connections.
-- Do not bypass `recorder.getTranscript()` — there is no separate batch transcribe API to fall back to. If a streaming session fails, surface the error to the user rather than re-uploading the recording file to some other endpoint.
-- When calling MiMo for follow-up chat, always include the original photo and the full message history.
-- FSRS `next_review_at` must be stored as ISO string and queried correctly for daily-due cards.
-- Do not read `.env` files via tool calls — values land in conversation history and need rotation.
+- Complete provider evaluation and privacy disclosure; staging-test the
+  implemented Volcengine TTS adapter and add Volcengine streaming ASR only if
+  that migration is chosen.
+- Add and sandbox-test StoreKit/Google Play purchase verification, server
+  notifications, restore, refund, grace-period and entitlement transitions.
+- Configure moderation policy, monitoring, cost alarms and incident runbooks.
+- Rehearse migrations, backup restore, nginx WebSocket timeouts and the
+  non-rolling auth cutover in staging.

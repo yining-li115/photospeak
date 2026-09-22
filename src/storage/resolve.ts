@@ -24,13 +24,21 @@ function docRoot(): string {
  * "/Documents/<one-of-these>/..." can be safely re-rooted under the
  * current docDirectory.
  */
-const OWNED_SUBDIRS = ['audio/', 'photos/', 'thumbnails/', 'recordings/'];
+const OWNED_SUBDIRS = [
+  'audio/',
+  'photos/',
+  'thumbnails/',
+  'recordings/',
+  'users/',
+];
 
 function extractOwnedRelative(uri: string): string | null {
   for (const sub of OWNED_SUBDIRS) {
-    const marker = `/Documents/${sub}`;
-    const idx = uri.lastIndexOf(marker);
-    if (idx >= 0) return uri.slice(idx + '/Documents/'.length);
+    for (const rootMarker of ['/Documents/', '/files/']) {
+      const marker = `${rootMarker}${sub}`;
+      const idx = uri.lastIndexOf(marker);
+      if (idx >= 0) return uri.slice(idx + rootMarker.length);
+    }
   }
   return null;
 }
@@ -73,6 +81,11 @@ export function toRelativeStoragePath(uri: string): string {
   if (!uri) return uri;
   const isAbsolute = uri.includes('://') || uri.startsWith('/');
   if (!isAbsolute) return uri;
+  // Fast path for both iOS and Android. Android app-document paths do not
+  // contain a `/Documents/` segment, so marker-only extraction persisted an
+  // absolute sandbox path there.
+  const root = docRoot();
+  if (uri.startsWith(root)) return uri.slice(root.length).replace(/^\/+/, '');
   const owned = extractOwnedRelative(uri);
   if (owned !== null) return owned;
   return uri;

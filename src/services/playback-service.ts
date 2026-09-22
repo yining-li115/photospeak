@@ -9,21 +9,42 @@
  * of any component tree.
  */
 import TrackPlayer, { Event } from 'react-native-track-player';
+import {
+  isRemotePlaybackEnabled,
+  setRemotePlaybackEnabled,
+} from '../audio/playback-gate';
+
+async function runIfRemotePlaybackEnabled(
+  operation: () => Promise<unknown>
+): Promise<void> {
+  if (!(await isRemotePlaybackEnabled())) return;
+  await operation();
+}
 
 export const playbackService = async (): Promise<void> => {
   TrackPlayer.addEventListener(Event.RemotePlay, () => {
-    TrackPlayer.play().catch(() => {});
+    runIfRemotePlaybackEnabled(() => TrackPlayer.play()).catch(() => {});
   });
   TrackPlayer.addEventListener(Event.RemotePause, () => {
+    // Pausing is always safe, including while an account transition is
+    // disabling the durable remote-control gate.
     TrackPlayer.pause().catch(() => {});
   });
   TrackPlayer.addEventListener(Event.RemoteNext, () => {
-    TrackPlayer.skipToNext().catch(() => {});
+    runIfRemotePlaybackEnabled(() => TrackPlayer.skipToNext()).catch(() => {});
   });
   TrackPlayer.addEventListener(Event.RemotePrevious, () => {
-    TrackPlayer.skipToPrevious().catch(() => {});
+    runIfRemotePlaybackEnabled(() =>
+      TrackPlayer.skipToPrevious()
+    ).catch(() => {});
   });
   TrackPlayer.addEventListener(Event.RemoteStop, () => {
-    TrackPlayer.reset().catch(() => {});
+    void (async () => {
+      try {
+        await setRemotePlaybackEnabled(false);
+      } finally {
+        await TrackPlayer.reset().catch(() => {});
+      }
+    })();
   });
 };

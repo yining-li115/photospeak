@@ -1,67 +1,212 @@
-import jwt from 'jsonwebtoken';
+import { createHash, randomUUID } from 'node:crypto';
+import jwt, { type JwtPayload } from 'jsonwebtoken';
 
-const SECRET = process.env.JWT_SECRET;
-if (!SECRET) {
-  throw new Error('JWT_SECRET is required');
+const ALGORITHM = 'HS256' as const;
+const CLOCK_TOLERANCE_SECONDS = 5;
+
+export function parseDurationSeconds(
+  value: string,
+  options: { name: string; min: number; max: number }
+): number {
+  const match = /^(\d+)(s|m|h|d)$/.exec(value.trim());
+  if (!match) {
+    throw new Error(`${options.name} must use s/m/h/d syntax`);
+  }
+  const amount = Number(match[1]);
+  const multiplier =
+    match[2] === 's'
+      ? 1
+      : match[2] === 'm'
+        ? 60
+        : match[2] === 'h'
+          ? 3_600
+          : 86_400;
+  const seconds = amount * multiplier;
+  if (
+    !Number.isSafeInteger(seconds) ||
+    seconds < options.min ||
+    seconds > options.max
+  ) {
+    throw new Error(
+      `${options.name} must be between ${options.min}s and ${options.max}s`
+    );
+  }
+  return seconds;
 }
-if (SECRET.length < 32) {
+
+const rawSecret = process.env.JWT_SECRET;
+if (!rawSecret) throw new Error('JWT_SECRET is required');
+if (rawSecret.length < 32) {
   throw new Error(
     'JWT_SECRET too short (need >= 32 chars). Generate with: openssl rand -base64 48'
   );
 }
+const SECRET: string = rawSecret;
 
-const ACCESS_EXPIRES = process.env.JWT_EXPIRES_IN ?? '7d';
-const REFRESH_EXPIRES = process.env.JWT_REFRESH_EXPIRES_IN ?? '30d';
+const ISSUER = process.env.JWT_ISSUER || 'photospeak-api';
+const AUDIENCE = process.env.JWT_AUDIENCE || 'photospeak-mobile';
+const ACCESS_TTL_SECONDS = parseDurationSeconds(
+  process.env.JWT_EXPIRES_IN || '15m',
+  { name: 'JWT_EXPIRES_IN', min: 5 * 60, max: 60 * 60 }
+);
+const REFRESH_TTL_SECONDS = parseDurationSeconds(
+  process.env.JWT_REFRESH_EXPIRES_IN || '30d',
+  { name: 'JWT_REFRESH_EXPIRES_IN', min: 24 * 60 * 60, max: 90 * 86_400 }
+);
+export const RECENT_AUTH_MAX_AGE_SECONDS = (() => {
+  const value = Number(process.env.AUTH_RECENT_MAX_AGE_SECONDS || 600);
+  if (!Number.isInteger(value) || value < 60 || value > 3_600) {
+    throw new Error('AUTH_RECENT_MAX_AGE_SECONDS must be an integer 60-3600');
+  }
+  return value;
+})();
 
-export interface AccessPayload {
-  /** User id (sub claim). */
+export interface TokenContext {
+  userId: string;
+  sessionId: string;
+  authenticatedAt: Date;
+}
+
+export interface AuthTokenPayload extends JwtPayload {
   sub: string;
-  /** Token kind discriminator so refresh tokens can't be used as access tokens and vice-versa. */
   kind: 'access' | 'refresh';
+  sid: string;
+  auth_time: number;
+  jti: string;
+  iat: number;
+  exp: number;
 }
 
-export function signAccess(userId: string): string {
-  return jwt.sign({ sub: userId, kind: 'access' }, SECRET as string, {
-    expiresIn: ACCESS_EXPIRES as jwt.SignOptions['expiresIn'],
-  });
+export interface IssuedToken {
+  token: string;
+  expiresAt: Date;
+  payload: AuthTokenPayload;
 }
 
-export function signRefresh(userId: string): string {
-  return jwt.sign({ sub: userId, kind: 'refresh' }, SECRET as string, {
-    expiresIn: REFRESH_EXPIRES as jwt.SignOptions['expiresIn'],
-  });
+function issueToken(
+  kind: 'access' | 'refresh',
+  context: TokenContext,
+  absoluteExpiresAt?: Date
+): IssuedToken {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const defaultTtl = kind === 'access' ? ACCESS_TTL_SECONDS : REFRESH_TTL_SECONDS;
+  const expiresSeconds = absoluteExpiresAt
+    ? Math.floor(absoluteExpiresAt.getTime() / 1_000)
+    : nowSeconds + defaultTtl;
+  if (expiresSeconds <= nowSeconds) throw new Error('Token expiry is not future');
+  if (expiresSeconds - nowSeconds > defaultTtl + CLOCK_TOLERANCE_SECONDS) {
+    throw new Error('Token expiry exceeds configured TTL');
+  }
+
+  const token = jwt.sign(
+    {
+      sub: context.userId,
+      kind,
+      sid: context.sessionId,
+      auth_time: Math.floor(context.authenticatedAt.getTime() / 1_000),
+      exp: expiresSeconds,
+    },
+    SECRET,
+    {
+      algorithm: ALGORITHM,
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      jwtid: randomUUID(),
+    }
+  );
+  const payload = jwt.decode(token) as AuthTokenPayload | null;
+  if (!payload?.exp || !payload.iat || !payload.jti) {
+    throw new Error('Failed to encode JWT timestamps');
+  }
+  return {
+    token,
+    expiresAt: new Date(payload.exp * 1_000),
+    payload,
+  };
 }
 
-/**
- * Returns the decoded payload if valid. Throws if the token is
- * expired, malformed, or the wrong kind.
- */
+export function issueAccessToken(context: TokenContext): IssuedToken {
+  return issueToken('access', context);
+}
+
+export function issueRefreshToken(
+  context: TokenContext,
+  absoluteExpiresAt?: Date
+): IssuedToken {
+  return issueToken('refresh', context, absoluteExpiresAt);
+}
+
+/** Store only a one-way fingerprint of refresh tokens in PostgreSQL. */
+export function hashRefreshToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 export function verifyToken(
   token: string,
   expectedKind: 'access' | 'refresh'
-): AccessPayload {
-  const decoded = jwt.verify(token, SECRET as string) as AccessPayload;
-  if (decoded.kind !== expectedKind) {
-    throw new Error(`Wrong token kind: expected ${expectedKind}`);
+): AuthTokenPayload {
+  const configuredTtl =
+    expectedKind === 'access' ? ACCESS_TTL_SECONDS : REFRESH_TTL_SECONDS;
+  return verifyTokenWithPolicy(token, expectedKind, {
+    ignoreExpiration: false,
+    maxAgeSeconds: configuredTtl + CLOCK_TOLERANCE_SECONDS,
+  });
+}
+
+function verifyTokenWithPolicy(
+  token: string,
+  expectedKind: 'access' | 'refresh',
+  policy: { ignoreExpiration: boolean; maxAgeSeconds: number }
+): AuthTokenPayload {
+  const decoded = jwt.verify(token, SECRET, {
+    algorithms: [ALGORITHM],
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    clockTolerance: CLOCK_TOLERANCE_SECONDS,
+    ignoreExpiration: policy.ignoreExpiration,
+    maxAge: policy.maxAgeSeconds,
+  }) as unknown as AuthTokenPayload;
+  const configuredTtl =
+    expectedKind === 'access' ? ACCESS_TTL_SECONDS : REFRESH_TTL_SECONDS;
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  if (
+    decoded.kind !== expectedKind ||
+    typeof decoded.sub !== 'string' ||
+    decoded.sub.length === 0 ||
+    decoded.sub.length > 128 ||
+    typeof decoded.sid !== 'string' ||
+    decoded.sid.length === 0 ||
+    decoded.sid.length > 128 ||
+    typeof decoded.jti !== 'string' ||
+    !Number.isInteger(decoded.iat) ||
+    !Number.isInteger(decoded.exp) ||
+    !Number.isInteger(decoded.auth_time) ||
+    decoded.exp <= decoded.iat ||
+    decoded.exp - decoded.iat > configuredTtl + CLOCK_TOLERANCE_SECONDS ||
+    decoded.iat > nowSeconds + CLOCK_TOLERANCE_SECONDS ||
+    decoded.auth_time > decoded.iat + CLOCK_TOLERANCE_SECONDS
+  ) {
+    throw new Error(`Invalid ${expectedKind} token claims`);
   }
   return decoded;
 }
 
-/** ms since epoch when a refresh token issued now would expire. */
-export function refreshExpiresAt(): Date {
-  // Approximate by parsing JWT_REFRESH_EXPIRES_IN. Default 30 days.
-  // We only use this to write the DB row's expires_at column; the
-  // real source of truth is the token's exp claim.
-  const m = REFRESH_EXPIRES.match(/^(\d+)([smhdwy])$/);
-  if (!m) return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const n = parseInt(m[1], 10);
-  const unit = m[2];
-  const sec =
-    unit === 's' ? n :
-    unit === 'm' ? n * 60 :
-    unit === 'h' ? n * 60 * 60 :
-    unit === 'd' ? n * 24 * 60 * 60 :
-    unit === 'w' ? n * 7 * 24 * 60 * 60 :
-    n * 365 * 24 * 60 * 60; // y
-  return new Date(Date.now() + sec * 1000);
+export function isRecentAuthentication(
+  authenticatedAt: Date,
+  now = new Date(),
+  maxAgeSeconds = RECENT_AUTH_MAX_AGE_SECONDS
+): boolean {
+  const ageMs = now.getTime() - authenticatedAt.getTime();
+  return ageMs >= -CLOCK_TOLERANCE_SECONDS * 1_000 && ageMs <= maxAgeSeconds * 1_000;
+}
+
+export function jwtPublicConfig() {
+  return {
+    algorithm: ALGORITHM,
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    accessTtlSeconds: ACCESS_TTL_SECONDS,
+    refreshTtlSeconds: REFRESH_TTL_SECONDS,
+    recentAuthMaxAgeSeconds: RECENT_AUTH_MAX_AGE_SECONDS,
+  };
 }

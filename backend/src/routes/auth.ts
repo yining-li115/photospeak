@@ -1,17 +1,36 @@
 import { Hono } from 'hono';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import { bodyLimit } from 'hono/body-limit';
 import { db, schema } from '../db/client.js';
-import {
-  signAccess,
-  signRefresh,
-  refreshExpiresAt,
-  verifyToken,
-} from '../auth/jwt.js';
 import {
   requireUser,
   type AuthVars,
 } from '../auth/middleware.js';
+import {
+  AccountDeletionInProgressError,
+  beginAccountDeletion,
+  createLoginSession,
+  revokeSession,
+  rotateRefreshToken,
+} from '../auth/session-service.js';
+import {
+  createDeletionReceiptServiceFromEnv,
+  type DeletionReceiptService,
+} from '../auth/deletion-receipt.js';
 import { verifyAppleIdentityToken } from '../auth/apple.js';
+import {
+  AppleCredentialError,
+  AppleIdentityMismatchError,
+  AppleServerError,
+  createAppleServerTokenServiceFromEnv,
+  type AppleServerTokenGateway,
+} from '../auth/apple-server.js';
+import {
+  AppleLoginCompensationError,
+  completeAppleLogin,
+} from '../auth/apple-account-service.js';
+import { findOrCreatePhoneUser } from '../auth/phone-account-service.js';
+import { processPendingAccountDeletion } from '../services/apple-deletion-recovery.js';
 import {
   sendVerifyCode,
   checkVerifyCode,
@@ -33,25 +52,216 @@ interface Config {
   appleBundleId: string;
   /** Master switch for /send-code + /verify (phone path). */
   phoneLoginEnabled: boolean;
+  /** Only trust X-Forwarded-For when the app is network-isolated behind nginx. */
+  trustProxy?: boolean;
+  /** Test/alternate implementation hook; production builds from env. */
+  appleServer?: AppleServerTokenGateway;
+  /** Test/alternate implementation hook; production builds from env. */
+  deletionReceiptService?: DeletionReceiptService;
 }
 
 const PHONE_RE = /^1[3-9]\d{9}$/;
 const CODE_RE = /^\d{6}$/;
+const CURRENT_CONSENT_VERSION = '2026-09-19.3';
+
+interface ConsentFields {
+  consent_version?: unknown;
+  consent_accepted_at?: unknown;
+}
+
+interface ValidConsentReceipt {
+  version: string;
+  acceptedAt: Date;
+}
 
 export function createAuthRouter(config: Config) {
   const app = new Hono<{ Variables: AuthVars }>();
+  const appleServer =
+    config.appleServer ??
+    createAppleServerTokenServiceFromEnv(config.appleBundleId);
+  const deletionReceipts =
+    config.deletionReceiptService ?? createDeletionReceiptServiceFromEnv();
+
+  app.use(
+    '*',
+    bodyLimit({
+      maxSize: 32 * 1024,
+      onError: (c) => c.json({ error: '请求内容过大' }, 413),
+    })
+  );
+
+  app.use(
+    '/apple',
+    rateLimit({
+      name: 'apple-login-ip',
+      windowMs: MIN_15_MS,
+      max: 20,
+      keyFn: (c) =>
+        `ip:${clientIp(c, { trustProxy: config.trustProxy })}`,
+    })
+  );
+  app.use(
+    '/refresh',
+    rateLimit({
+      name: 'refresh-ip',
+      windowMs: MIN_15_MS,
+      max: 60,
+      keyFn: (c) =>
+        `ip:${clientIp(c, { trustProxy: config.trustProxy })}`,
+    })
+  );
+  app.use(
+    '/deletion-status',
+    rateLimit({
+      name: 'deletion-status-ip',
+      windowMs: MIN_15_MS,
+      max: 60,
+      keyFn: (c) =>
+        `ip:${clientIp(c, { trustProxy: config.trustProxy })}`,
+    })
+  );
+  app.use(
+    '/deletion-receipt',
+    rateLimit({
+      name: 'deletion-receipt-ip',
+      windowMs: MIN_15_MS,
+      max: 20,
+      keyFn: (c) =>
+        `ip:${clientIp(c, { trustProxy: config.trustProxy })}`,
+    })
+  );
+
+  // The client must durably store this narrow receipt before it sends DELETE.
+  // A receipt is not accepted by ordinary auth middleware and survives access
+  // JWT expiry, session revocation, and independent access-key rotation.
+  app.post('/deletion-receipt', requireUser(), (c) => {
+    const receipt = deletionReceipts.issue(c.get('userId'));
+    return c.json({
+      deletion_receipt: receipt.token,
+      expires_at: receipt.expiresAt.toISOString(),
+    });
+  });
+
+  // A narrowly scoped reconciliation channel for a lost DELETE response. It
+  // returns only deletion state, never profile or general account data.
+  app.get('/deletion-status', async (c) => {
+    const authorization = c.req.header('authorization');
+    if (!authorization?.startsWith('Bearer ')) {
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_DELETION_STATUS_UNAVAILABLE' },
+        401
+      );
+    }
+    let payload;
+    try {
+      payload = deletionReceipts.verify(authorization.slice(7));
+    } catch {
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_DELETION_STATUS_UNAVAILABLE' },
+        401
+      );
+    }
+
+    const [account] = await db
+      .select({
+        deletedAt: schema.users.deletedAt,
+        deletionState: schema.users.deletionState,
+        appleUserId: schema.users.appleUserId,
+        appleTokenRevokedAt: schema.users.appleTokenRevokedAt,
+        appleManualRevokeRequiredAt:
+          schema.users.appleManualRevokeRequiredAt,
+      })
+      .from(schema.users)
+      .where(eq(schema.users.id, payload.sub))
+      .limit(1);
+
+    if (!account) {
+      // Hard deletion runs only after the seven-day retention period. A valid
+      // old token reaching this state therefore confirms that the account no
+      // longer exists; preserve a conservative Apple reminder because its
+      // former login method was intentionally erased with the profile.
+      return c.json({
+        status: 'deleted' as const,
+        apple_revocation: 'unknown' as const,
+        manual_revoke_instructions:
+          '如果你曾使用“通过 Apple 登录”，请在 Apple 账户设置中确认已停止使用 PhotoSpeak。',
+      });
+    }
+    if (
+      account.deletionState === 'deleting' &&
+      account.deletedAt === null
+    ) {
+      return c.json({
+        status: 'deleting' as const,
+        apple_revocation: 'pending' as const,
+      });
+    }
+    if (account.deletedAt || account.deletionState === 'deleted') {
+      const appleRevocation = account.appleManualRevokeRequiredAt
+        ? ('manual_required' as const)
+        : account.appleTokenRevokedAt
+          ? ('revoked' as const)
+          : account.appleUserId
+            ? ('unknown' as const)
+            : ('not_applicable' as const);
+      return c.json({
+        status: 'deleted' as const,
+        apple_revocation: appleRevocation,
+        manual_revoke_instructions:
+          appleRevocation === 'manual_required'
+            ? '请在 Apple 账户设置的“使用 Apple 登录”中停止使用 PhotoSpeak。'
+            : undefined,
+      });
+    }
+    return c.json({
+      status: 'active' as const,
+      apple_revocation: 'not_applicable' as const,
+    });
+  });
 
   // ─── POST /auth/apple ─────────────────────────────────────────────
   app.post('/apple', async (c) => {
-    let body: { identity_token?: string; full_name?: { givenName?: string; familyName?: string } | null } = {};
+    let body: {
+      identity_token?: string;
+      authorization_code?: string;
+      full_name?: { givenName?: string; familyName?: string } | null;
+    } & ConsentFields = {};
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
+    const consent = parseConsentReceipt(body);
+    if (!consent) {
+      return c.json(
+        {
+          error: '请先同意当前用户协议与隐私政策',
+          code: 'CONSENT_REQUIRED',
+        },
+        400
+      );
+    }
     const identityToken = body.identity_token;
-    if (!identityToken || typeof identityToken !== 'string') {
+    if (
+      !identityToken ||
+      typeof identityToken !== 'string' ||
+      identityToken.length > 20_000
+    ) {
       return c.json({ error: 'identity_token is required' }, 400);
+    }
+    const authorizationCode = body.authorization_code;
+    if (
+      !authorizationCode ||
+      typeof authorizationCode !== 'string' ||
+      authorizationCode.length > 10_000
+    ) {
+      return c.json(
+        {
+          error: 'authorization_code is required',
+          code: 'AUTH_APPLE_CODE_REQUIRED',
+        },
+        400
+      );
     }
 
     let identity;
@@ -61,47 +271,86 @@ export function createAuthRouter(config: Config) {
         config.appleBundleId
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return c.json({ error: `Apple token verification failed: ${msg}` }, 401);
-    }
-
-    // Upsert user.
-    const [existing] = await db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.appleUserId, identity.sub))
-      .limit(1);
-
-    let user = existing;
-    if (!user) {
-      const givenName = body.full_name?.givenName ?? '';
-      const familyName = body.full_name?.familyName ?? '';
-      // Apple sends fullName ONLY on the first login; subsequent logins
-      // get null. So fall back to a tail-of-sub placeholder if missing.
-      const nickname =
-        [familyName, givenName].filter(Boolean).join('') ||
-        `用户${identity.sub.slice(-4)}`;
-
-      const [created] = await db
-        .insert(schema.users)
-        .values({
-          appleUserId: identity.sub,
-          email: identity.email,
-          nickname,
+      console.warn(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: 'auth.apple.invalid_token',
+          message: err instanceof Error ? err.message : String(err),
         })
-        .returning();
-      user = created;
-    } else if (user.deletedAt) {
-      // Reactivate within cooldown — clear deleted_at.
-      const [reactivated] = await db
-        .update(schema.users)
-        .set({ deletedAt: null, updatedAt: new Date() })
-        .where(eq(schema.users.id, user.id))
-        .returning();
-      user = reactivated;
+      );
+      return c.json(
+        { error: 'Apple 登录凭证无效', code: 'AUTH_APPLE_INVALID' },
+        401
+      );
     }
 
-    return c.json(await issueSession(user));
+    try {
+      const result = await completeAppleLogin({
+        identity,
+        authorizationCode,
+        fullName: body.full_name,
+        consent: {
+          version: consent.version,
+          acceptedAt: consent.acceptedAt,
+          source: 'apple_login',
+        },
+        appleServer,
+      });
+      return c.json({
+        access_token: result.accessToken,
+        refresh_token: result.refreshToken,
+        user: sanitizeUser(result.user),
+      });
+    } catch (err) {
+      logAppleFailure('auth.apple.code_exchange_failed', err);
+      if (err instanceof AccountDeletionInProgressError) {
+        return c.json(
+          {
+            error: '账号正在注销，请等待当前操作完成后再登录',
+            code: 'AUTH_ACCOUNT_DELETE_IN_PROGRESS',
+          },
+          409
+        );
+      }
+      if (
+        err instanceof AppleServerError &&
+        err.kind === 'rejected' &&
+        err.upstreamCode === 'invalid_grant'
+      ) {
+        return c.json(
+          {
+            error: 'Apple 授权码无效或已使用',
+            code: 'AUTH_APPLE_CODE_INVALID',
+          },
+          401
+        );
+      }
+      if (err instanceof AppleIdentityMismatchError) {
+        return c.json(
+          {
+            error: 'Apple 登录身份不匹配',
+            code: 'AUTH_APPLE_IDENTITY_MISMATCH',
+          },
+          401
+        );
+      }
+      if (err instanceof AppleLoginCompensationError) {
+        return c.json(
+          {
+            error: 'Apple 登录未完成，凭证清理需要重试',
+            code: 'AUTH_APPLE_COMPENSATION_REQUIRED',
+          },
+          503
+        );
+      }
+      return c.json(
+        {
+          error: 'Apple 登录服务暂时不可用，请稍后重试',
+          code: 'AUTH_APPLE_UNAVAILABLE',
+        },
+        503
+      );
+    }
   });
 
   // ─── POST /auth/send-code (phone) ─────────────────────────────────
@@ -117,7 +366,8 @@ export function createAuthRouter(config: Config) {
       name: 'send-code-ip',
       windowMs: HOUR_MS,
       max: 20,
-      keyFn: (c) => `ip:${clientIp(c)}`,
+      keyFn: (c) =>
+        `ip:${clientIp(c, { trustProxy: config.trustProxy })}`,
       message: '请求过于频繁，请稍后再试',
     }),
     async (c) => {
@@ -176,17 +426,32 @@ export function createAuthRouter(config: Config) {
       name: 'verify-ip',
       windowMs: MIN_15_MS,
       max: 30,
-      keyFn: (c) => `ip:${clientIp(c)}`,
+      keyFn: (c) =>
+        `ip:${clientIp(c, { trustProxy: config.trustProxy })}`,
     }),
     async (c) => {
       if (!config.phoneLoginEnabled) {
         return c.json({ error: '手机号登录暂未开放' }, 403);
       }
-      let body: { phone?: string; code?: string; nickname?: string } = {};
+      let body: {
+        phone?: string;
+        code?: string;
+        nickname?: string;
+      } & ConsentFields = {};
       try {
         body = await c.req.json();
       } catch {
         return c.json({ error: 'invalid JSON body' }, 400);
+      }
+      const consent = parseConsentReceipt(body);
+      if (!consent) {
+        return c.json(
+          {
+            error: '请先同意当前用户协议与隐私政策',
+            code: 'CONSENT_REQUIRED',
+          },
+          400
+        );
       }
       const phone = body.phone;
       const code = body.code;
@@ -218,27 +483,35 @@ export function createAuthRouter(config: Config) {
         return c.json({ error: '验证码服务暂时不可用' }, 503);
       }
       if (!isValid) {
-        return c.json({ error: '验证码错误或已过期' }, 401);
+        return c.json(
+          { error: '验证码错误或已过期', code: 'AUTH_CODE_INVALID' },
+          401
+        );
       }
 
-      // Upsert user by phone (active rows only).
-      const [existing] = await db
-        .select()
-        .from(schema.users)
-        .where(and(eq(schema.users.phone, phone), isNull(schema.users.deletedAt)))
-        .limit(1);
-
-      let user = existing;
-      if (!user) {
-        const nickname = body.nickname?.trim() || `用户${phone.slice(-4)}`;
-        const [created] = await db
-          .insert(schema.users)
-          .values({ phone, nickname })
-          .returning();
-        user = created;
+      try {
+        const suppliedNickname =
+          typeof body.nickname === 'string'
+            ? body.nickname.trim().slice(0, 50)
+            : '';
+        const user = await findOrCreatePhoneUser({
+          phone,
+          nickname: suppliedNickname || `用户${phone.slice(-4)}`,
+        });
+        await recordConsentReceipt(user.id, consent, 'phone_login');
+        return c.json(await issueSession(user));
+      } catch (error) {
+        if (error instanceof AccountDeletionInProgressError) {
+          return c.json(
+            {
+              error: '账号正在注销，请等待当前操作完成后再登录',
+              code: 'AUTH_ACCOUNT_DELETE_IN_PROGRESS',
+            },
+            409
+          );
+        }
+        throw error;
       }
-
-      return c.json(await issueSession(user));
     }
   );
 
@@ -255,57 +528,45 @@ export function createAuthRouter(config: Config) {
       return c.json({ error: 'refresh_token required' }, 400);
     }
 
-    // Token must (a) verify cryptographically AND (b) still be in
-    // refresh_tokens with revoked=false. Either check alone isn't
-    // enough — JWT-only would let a logout-revoked token still work;
-    // DB-only would let an expired-but-still-rowed token through.
-    let payload;
-    try {
-      payload = verifyToken(refreshToken, 'refresh');
-    } catch {
-      return c.json({ error: 'invalid refresh token' }, 401);
+    const idempotencyKey = c.req.header('idempotency-key');
+    const result = await rotateRefreshToken(refreshToken, idempotencyKey);
+    if (result.status === 'invalid_idempotency_key') {
+      return c.json(
+        {
+          error: 'invalid Idempotency-Key',
+          code: 'AUTH_IDEMPOTENCY_KEY_INVALID',
+        },
+        400
+      );
     }
-    const [stored] = await db
-      .select()
-      .from(schema.refreshTokens)
-      .where(eq(schema.refreshTokens.token, refreshToken))
-      .limit(1);
-    if (!stored || stored.revoked || stored.expiresAt.getTime() < Date.now()) {
-      return c.json({ error: 'invalid refresh token' }, 401);
+    if (result.status === 'reuse_detected') {
+      return c.json(
+        {
+          error: '检测到登录凭证重复使用，请重新登录',
+          code: 'AUTH_REFRESH_REUSE_DETECTED',
+        },
+        401
+      );
     }
-
-    const [user] = await db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.id, payload.sub))
-      .limit(1);
-    if (!user || user.deletedAt) {
-      return c.json({ error: 'user not found' }, 401);
+    if (result.status === 'invalid') {
+      return c.json(
+        { error: 'invalid refresh token', code: 'AUTH_REFRESH_INVALID' },
+        401
+      );
     }
-
-    return c.json({ access_token: signAccess(user.id) });
+    return c.json({
+      access_token: result.tokens.accessToken,
+      refresh_token: result.tokens.refreshToken,
+    });
   });
 
   // ─── DELETE /auth/logout ──────────────────────────────────────────
   app.delete('/logout', requireUser(), async (c) => {
-    let body: { refresh_token?: string } = {};
-    try {
-      body = await c.req.json();
-    } catch {
-      // logout body is optional — we'll just no-op the token revoke.
-    }
-    const refreshToken = body.refresh_token;
-    if (refreshToken) {
-      await db
-        .update(schema.refreshTokens)
-        .set({ revoked: true })
-        .where(
-          and(
-            eq(schema.refreshTokens.token, refreshToken),
-            eq(schema.refreshTokens.userId, c.get('userId'))
-          )
-        );
-    }
+    // The access token's session id is authoritative. If the client auto-
+    // refreshed immediately before retrying logout, it is still the same
+    // family, so the newly issued refresh token is revoked as well. The old
+    // refresh_token request field remains accepted but is no longer trusted.
+    await revokeSession(c.get('userId'), c.get('sessionId'));
     return c.json({ message: '已登出' });
   });
 
@@ -354,18 +615,79 @@ export function createAuthRouter(config: Config) {
   // deletes after that). Re-logging in via Apple/phone within the
   // window reactivates the account (clears deleted_at) — see
   // /auth/apple's reactivation branch.
-  app.delete('/me', requireUser(), async (c) => {
+  app.delete('/me', requireUser({ allowDeleting: true }), async (c) => {
     const userId = c.get('userId');
-    const now = new Date();
-    await db
-      .update(schema.users)
-      .set({ deletedAt: now, updatedAt: now })
-      .where(eq(schema.users.id, userId));
-    await db
-      .update(schema.refreshTokens)
-      .set({ revoked: true })
-      .where(eq(schema.refreshTokens.userId, userId));
-    return c.json({ message: '账号已注销，7 天内重新登录可恢复' });
+    const sessionId = c.get('sessionId');
+    const begin = await beginAccountDeletion(userId, sessionId);
+    if (begin.status === 'recent_auth_required') {
+      return c.json(
+        {
+          error: '删除账号前请重新登录以确认身份',
+          code: 'AUTH_RECENT_LOGIN_REQUIRED',
+        },
+        403
+      );
+    }
+    if (begin.status === 'invalid_session') {
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_ACCESS_EXPIRED' },
+        401
+      );
+    }
+
+    // deletion_state='deleting' is durable before the first network call.
+    // Deletion clears any short Apple-login reservation; a late exchange then
+    // takes the compensation/outbox path and cannot reactivate this account.
+    const finalized = await processPendingAccountDeletion({
+      userId,
+      sessionId,
+      appleServer,
+    });
+    if (finalized.status === 'revocation_failed') {
+      logAppleFailure('auth.apple.revoke_failed', finalized.error, userId);
+      return c.json(
+        {
+          error: 'Apple 授权撤销失败，账号尚未删除，请稍后重试',
+          code: 'APPLE_REVOCATION_UNAVAILABLE',
+        },
+        503
+      );
+    }
+    if (finalized.status === 'credentials_remaining') {
+      return c.json(
+        {
+          error: 'Apple 凭证刚刚发生变化，账号尚未删除，请重试',
+          code: 'AUTH_ACCOUNT_DELETE_RETRY',
+        },
+        409
+      );
+    }
+    if (finalized.status === 'invalid_session') {
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_ACCESS_EXPIRED' },
+        401
+      );
+    }
+    if (finalized.outcome === 'manual_required') {
+      console.warn(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: 'auth.apple.manual_revocation_required',
+          userId,
+        })
+      );
+      return c.json({
+        message: '账号已注销，7 天内重新登录可恢复',
+        code: 'APPLE_MANUAL_REVOKE_REQUIRED',
+        apple_revocation: 'manual_required',
+        manual_revoke_instructions:
+          '请在 Apple 账户设置的“使用 Apple 登录”中停止使用本 App。',
+      });
+    }
+    return c.json({
+      message: '账号已注销，7 天内重新登录可恢复',
+      apple_revocation: finalized.outcome,
+    });
   });
 
   return app;
@@ -374,16 +696,10 @@ export function createAuthRouter(config: Config) {
 // ─── helpers ────────────────────────────────────────────────────────
 
 async function issueSession(user: typeof schema.users.$inferSelect) {
-  const access = signAccess(user.id);
-  const refresh = signRefresh(user.id);
-  await db.insert(schema.refreshTokens).values({
-    token: refresh,
-    userId: user.id,
-    expiresAt: refreshExpiresAt(),
-  });
+  const tokens = await createLoginSession(user.id);
   return {
-    access_token: access,
-    refresh_token: refresh,
+    access_token: tokens.accessToken,
+    refresh_token: tokens.refreshToken,
     user: sanitizeUser(user),
   };
 }
@@ -396,4 +712,63 @@ function sanitizeUser(u: typeof schema.users.$inferSelect) {
     email: u.email,
     created_at: u.createdAt.toISOString(),
   };
+}
+
+async function recordConsentReceipt(
+  userId: string,
+  receipt: ValidConsentReceipt,
+  source: string
+): Promise<void> {
+  await db
+    .insert(schema.consentReceipts)
+    .values({
+      userId,
+      consentVersion: receipt.version,
+      acceptedAt: receipt.acceptedAt,
+      source,
+    })
+    .onConflictDoNothing({
+      target: [
+        schema.consentReceipts.userId,
+        schema.consentReceipts.consentVersion,
+      ],
+    });
+}
+
+function parseConsentReceipt(
+  fields: ConsentFields
+): ValidConsentReceipt | null {
+  if (fields.consent_version !== CURRENT_CONSENT_VERSION) return null;
+  if (typeof fields.consent_accepted_at !== 'string') return null;
+  const candidate = new Date(fields.consent_accepted_at);
+  if (Number.isNaN(candidate.getTime())) return null;
+  const now = new Date();
+  return {
+    version: CURRENT_CONSENT_VERSION,
+    acceptedAt: candidate <= now ? candidate : now,
+  };
+}
+
+function logAppleFailure(event: string, error: unknown, userId?: string): void {
+  const compensationError =
+    error instanceof AppleLoginCompensationError ? error : undefined;
+  const cause = compensationError?.originalError ?? error;
+  const appleError = cause instanceof AppleServerError ? cause : undefined;
+  console.warn(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      userId: userId || '',
+      errorKind:
+        appleError?.kind ||
+        (cause instanceof AppleIdentityMismatchError
+          ? 'identity_mismatch'
+          : cause instanceof AppleCredentialError
+            ? 'credential_error'
+            : 'verification_error'),
+      upstreamStatus: appleError?.httpStatus,
+      upstreamCode: appleError?.upstreamCode,
+      compensationCleanupQueued: compensationError?.cleanupQueued,
+    })
+  );
 }

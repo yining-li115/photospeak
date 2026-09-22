@@ -14,7 +14,6 @@ import { RuntimeOptions } from '@alicloud/tea-util';
 // the top level, on `.default`, or (since some recent v2 builds) on
 // `.default.default`. Walk down the `default` chain until we find a
 // function — that's the class.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function resolveDypnsapiCtor(pkg: any): any {
   let cur = pkg;
   for (let i = 0; i < 4 && cur; i++) {
@@ -42,7 +41,6 @@ function getClient(): DypnsapiClient {
   // If the unwrap above failed (package structure changed yet again),
   // dump enough of the export shape to identify where the class moved.
   if (typeof DypnsapiCtor !== 'function') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pkg = DypnsapiPkg as any;
     console.error(
       JSON.stringify({

@@ -13,6 +13,8 @@
 set -euo pipefail
 
 BASE="${BASE:-http://localhost:3000}"
+SMOKE_TEST_PLATFORM="${SMOKE_TEST_PLATFORM:-ios}"
+SMOKE_TEST_BUILD="${SMOKE_TEST_BUILD:-999999}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,29 +38,45 @@ out=$(curl -fs --max-time 5 "$BASE/health") || fail "/health unreachable"
 [[ "$out" == *'"status":"ok"'* ]] || fail "/health unexpected body: $out"
 echo "ok"
 
-# 2. Public legal page — proves Hono routing + HTML rendering work.
+# 2. Readiness probe — proves the database is reachable and config loaded.
+echo -n "  · /ready ... "
+out=$(curl -fs --max-time 8 "$BASE/ready") || fail "/ready unavailable"
+[[ "$out" == *'"status":"ready"'* ]] || fail "/ready unexpected body: $out"
+echo "ok"
+
+# 3. Public legal page — proves Hono routing + HTML rendering work.
 echo -n "  · /privacy ... "
 status=$(curl -fs --max-time 5 -o /dev/null -w '%{http_code}' "$BASE/privacy") || fail "/privacy unreachable"
 [[ "$status" == "200" ]] || fail "/privacy got HTTP $status"
 echo "ok"
 
-# 3. Auth gate proves middleware chain works — unauth'd /api/* must 401.
-#    (We don't need a valid JWT — we just need to confirm the gate fires.)
-echo -n "  · /api/transcribe (no auth) ... "
-status=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{}' \
-  "$BASE/api/transcribe")
-[[ "$status" == "401" ]] || fail "/api/transcribe should 401 without auth, got $status"
+# 4. Public support page — required by App Store product metadata.
+echo -n "  · /support ... "
+status=$(curl -fs --max-time 5 -o /dev/null -w '%{http_code}' "$BASE/support") || fail "/support unreachable"
+[[ "$status" == "200" ]] || fail "/support got HTTP $status"
 echo "ok"
 
-# 4. Body validation — auth'd request with empty body must fail 400.
+# 5. Auth gate proves middleware chain works — unauth'd /api/* must 401.
+#    (We don't need a valid JWT — we just need to confirm the gate fires.)
+echo -n "  · /api/transcribe/session (no auth) ... "
+status=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' -X POST \
+  -H "X-Client-Platform: $SMOKE_TEST_PLATFORM" \
+  -H "X-Client-Build: $SMOKE_TEST_BUILD" \
+  -H 'Content-Type: application/json' \
+  -d '{}' \
+  "$BASE/api/transcribe/session")
+[[ "$status" == "401" ]] || fail "/api/transcribe/session should 401 without auth, got $status"
+echo "ok"
+
+# 6. Body validation — auth'd request with empty body must fail 400.
 #    Skip if SMOKE_TEST_TOKEN unset (fine for local dev; required in prod
 #    deploy script so we exercise the full validator path).
 if [[ -n "${SMOKE_TEST_TOKEN:-}" ]]; then
   echo -n "  · /api/analyze (auth, empty body) ... "
   status=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $SMOKE_TEST_TOKEN" \
+    -H "X-Client-Platform: $SMOKE_TEST_PLATFORM" \
+    -H "X-Client-Build: $SMOKE_TEST_BUILD" \
     -H 'Content-Type: application/json' \
     -d '{}' \
     "$BASE/api/analyze")

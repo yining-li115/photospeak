@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
@@ -18,29 +19,48 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card } from '../../../src/components/Card';
 import { usePlayer } from '../../../src/context/player';
-import { listCardsBySession } from '../../../src/db/cards';
-import { listSessions } from '../../../src/db/sessions';
+import { countCardsBySession } from '../../../src/db/cards';
+import {
+  listSessionSummaries,
+  type SessionCursor,
+  type SessionSummary,
+} from '../../../src/db/sessions';
 import { deleteSessionCascade } from '../../../src/services/delete';
 import { colors, radius, spacing, text } from '../../../src/theme';
-import type { Session } from '../../../src/types';
+
+const PAGE_SIZE = 30;
 
 export default function SessionsScreen() {
   const router = useRouter();
   const player = usePlayer();
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<SessionCursor | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const reload = useCallback(async () => {
-    const rows = await listSessions();
-    setSessions(rows);
+    const page = await listSessionSummaries({ limit: PAGE_SIZE });
+    setSessions(page.items);
+    setNextCursor(page.nextCursor);
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        await reload();
-        if (!cancelled) setLoading(false);
+        try {
+          await reload();
+        } catch (error) {
+          if (!cancelled) {
+            Alert.alert(
+              'Could not load sessions',
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
       })();
       return () => {
         cancelled = true;
@@ -53,10 +73,38 @@ export default function SessionsScreen() {
     router.push(`/sessions/${id}`);
   };
 
-  const confirmDelete = async (session: Session) => {
-    const cardCount = (await listCardsBySession(session.id)).length;
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await listSessionSummaries({
+        limit: PAGE_SIZE,
+        cursor: nextCursor,
+      });
+      setSessions((previous) => {
+        const known = new Set(previous.map((item) => item.id));
+        return [
+          ...previous,
+          ...page.items.filter((item) => !known.has(item.id)),
+        ];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (error) {
+      Alert.alert(
+        'Could not load more sessions',
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [nextCursor]);
+
+  const confirmDelete = async (session: SessionSummary) => {
+    const cardCount = await countCardsBySession(session.id);
     const podcastNote =
-      session.polished_sentences.length > 0
+      session.podcast_generated && session.sentence_count > 0
         ? `Its podcast in Listening`
         : null;
     const cardsNote =
@@ -74,12 +122,12 @@ export default function SessionsScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          // If the player is currently using this session, stop it
-          // before we yank the audio files out from under it.
-          if (player.current?.sessionId === session.id) {
-            player.stop();
-          }
           try {
+            // If the player is currently using this session, silence native
+            // playback before removing files from beneath its queue.
+            if (player.queue.some((track) => track.sessionId === session.id)) {
+              await player.stop();
+            }
             await deleteSessionCascade(session.id);
             await reload();
           } catch (e) {
@@ -127,6 +175,16 @@ export default function SessionsScreen() {
               onRequestDelete={() => confirmDelete(item)}
             />
           )}
+          onEndReached={() => void loadMore()}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator
+                style={styles.listFooter}
+                color={colors.textTertiary}
+              />
+            ) : null
+          }
         />
       )}
     </SafeAreaView>
@@ -152,13 +210,13 @@ function SessionRow({
   onPress,
   onRequestDelete,
 }: {
-  session: Session;
+  session: SessionSummary;
   onPress: () => void;
   onRequestDelete: () => void;
 }) {
   const swipeRef = useRef<Swipeable>(null);
   const date = new Date(session.created_at).toLocaleDateString();
-  const firstChunk = session.chunks[0]?.chunk ?? 'New session';
+  const firstChunk = session.summary_title || 'New session';
 
   const renderRightActions = () => (
     <RectButton
@@ -238,6 +296,9 @@ const styles = StyleSheet.create({
   listContent: {
     padding: spacing.lg,
     paddingTop: 0,
+  },
+  listFooter: {
+    paddingVertical: spacing.lg,
   },
   empty: {
     flex: 1,

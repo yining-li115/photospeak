@@ -4,26 +4,46 @@ import { useCallback, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import {
+  BackendError,
+  backendPublicDocumentUrl,
+} from '../../../src/api/backend';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
 import { useAuth } from '../../../src/context/auth';
-import { countMasteredCards, listCardsDueBy } from '../../../src/db/cards';
+import { countCardsDueBy, countMasteredCards } from '../../../src/db/cards';
 import {
   getCurrentStreak,
   getListeningSecondsBetween,
   getStatsRange,
   getTotalListeningSeconds,
 } from '../../../src/db/stats';
+import {
+  isDiagnosticsEnabled,
+  loadDiagnosticsPreference,
+  setDiagnosticsEnabled,
+} from '../../../src/privacy/diagnostics';
+import {
+  initializeSentryIfEnabled,
+  shutdownSentry,
+} from '../../../src/monitoring/sentry';
 import { colors, radius, shadow, spacing, text } from '../../../src/theme';
+import {
+  addLocalDays,
+  localDateKey,
+  startOfLocalWeekMonday,
+} from '../../../src/utils/local-date';
 
 const HEATMAP_WEEKS = 16;
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
@@ -60,6 +80,10 @@ export default function HomeScreen() {
   const [editingNickname, setEditingNickname] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState('');
   const [nicknameSaving, setNicknameSaving] = useState(false);
+  const [diagnosticsEnabled, setDiagnosticsState] = useState(
+    isDiagnosticsEnabled()
+  );
+  const [diagnosticsSaving, setDiagnosticsSaving] = useState(false);
 
   const openNicknameEditor = () => {
     setNicknameDraft(user?.nickname ?? '');
@@ -111,7 +135,7 @@ export default function HomeScreen() {
   const handleDeleteAccount = () => {
     Alert.alert(
       '注销账号',
-      '注销后账号进入 7 天冷静期，期间重新登录可恢复。冷静期后所有数据将被永久删除。',
+      '本机学习记录与音频会立即且不可恢复地删除。服务器账号进入 7 天冷静期，期间重新登录可恢复账号；冷静期后账号信息将永久删除。',
       [
         { text: '取消', style: 'cancel' },
         {
@@ -119,8 +143,32 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteAccount();
+              const result = await deleteAccount();
+              if (
+                result.code === 'ACCOUNT_DELETION_PENDING' ||
+                result.code === 'LOCAL_CLEANUP_PENDING'
+              ) {
+                Alert.alert('注销已受理', result.message);
+              }
             } catch (err) {
+              if (
+                err instanceof BackendError &&
+                err.code === 'AUTH_RECENT_LOGIN_REQUIRED'
+              ) {
+                Alert.alert(
+                  '请重新确认身份',
+                  '为防止他人拿到已解锁的手机后注销账号，请先退出并重新登录，再回到这里注销。',
+                  [
+                    { text: '取消', style: 'cancel' },
+                    {
+                      text: '退出并重新登录',
+                      style: 'destructive',
+                      onPress: () => void logout(),
+                    },
+                  ]
+                );
+                return;
+              }
               const msg = err instanceof Error ? err.message : '请稍后重试';
               Alert.alert('注销失败', msg);
             }
@@ -130,12 +178,42 @@ export default function HomeScreen() {
     );
   };
 
+  const openLegalDocument = (
+    document: 'privacy' | 'terms' | 'support'
+  ) => {
+    let url: string;
+    try {
+      url = backendPublicDocumentUrl(document);
+    } catch {
+      Alert.alert('暂时无法打开', '后端地址未配置，请联系支持人员');
+      return;
+    }
+    void Linking.openURL(url).catch(() => {
+      Alert.alert('暂时无法打开', '请检查网络后重试');
+    });
+  };
+
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        const next = await loadHomeStats();
-        if (!cancelled) setStats(next);
+        try {
+          const [next, diagnostics] = await Promise.all([
+            loadHomeStats(),
+            loadDiagnosticsPreference(false),
+          ]);
+          if (!cancelled) {
+            setStats(next);
+            setDiagnosticsState(diagnostics);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            Alert.alert(
+              'Could not load progress',
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        }
       })();
       return () => {
         cancelled = true;
@@ -242,6 +320,77 @@ export default function HomeScreen() {
 
         <Card style={styles.accountCard}>
           <Text style={styles.sectionLabel}>Account</Text>
+          <View style={styles.accountRow}>
+            <Ionicons
+              name="analytics-outline"
+              size={18}
+              color={colors.textPrimary}
+            />
+            <View style={styles.accountRowCopy}>
+              <Text style={styles.accountRowText}>发送诊断数据</Text>
+              <Text style={styles.accountRowHint}>崩溃、错误与少量性能数据</Text>
+            </View>
+            <Switch
+              value={diagnosticsEnabled}
+              disabled={diagnosticsSaving}
+              onValueChange={(enabled) => {
+                setDiagnosticsSaving(true);
+                void setDiagnosticsEnabled(enabled)
+                  .then(async () => {
+                    setDiagnosticsState(enabled);
+                    if (enabled) initializeSentryIfEnabled();
+                    else await shutdownSentry();
+                  })
+                  .catch(() => {
+                    Alert.alert('保存失败', '无法更新诊断数据设置，请稍后重试');
+                  })
+                  .finally(() => setDiagnosticsSaving(false));
+              }}
+              trackColor={{ true: colors.accent, false: colors.separator }}
+            />
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.accountRow,
+              pressed && { opacity: 0.6 },
+            ]}
+            onPress={() => openLegalDocument('privacy')}
+          >
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={18}
+              color={colors.textPrimary}
+            />
+            <Text style={styles.accountRowText}>隐私政策</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.accountRow,
+              pressed && { opacity: 0.6 },
+            ]}
+            onPress={() => openLegalDocument('terms')}
+          >
+            <Ionicons
+              name="document-text-outline"
+              size={18}
+              color={colors.textPrimary}
+            />
+            <Text style={styles.accountRowText}>用户协议</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.accountRow,
+              pressed && { opacity: 0.6 },
+            ]}
+            onPress={() => openLegalDocument('support')}
+          >
+            <Ionicons
+              name="help-circle-outline"
+              size={18}
+              color={colors.textPrimary}
+            />
+            <Text style={styles.accountRowText}>帮助与支持</Text>
+          </Pressable>
           <Pressable
             style={({ pressed }) => [
               styles.accountRow,
@@ -346,9 +495,9 @@ export default function HomeScreen() {
 
 async function loadHomeStats(): Promise<HomeStats> {
   const now = new Date();
-  const today = isoDay(now);
-  const monday = startOfWeekMonday(now);
-  const mondayIso = isoDay(monday);
+  const today = localDateKey(now);
+  const monday = startOfLocalWeekMonday(now);
+  const mondayIso = localDateKey(monday);
 
   const heatmapDates = buildHeatmapDates(now);
   const heatmapStart = heatmapDates[0];
@@ -367,7 +516,7 @@ async function loadHomeStats(): Promise<HomeStats> {
     getListeningSecondsBetween(mondayIso, today),
     getTotalListeningSeconds(),
     countMasteredCards(),
-    listCardsDueBy(now.toISOString()),
+    countCardsDueBy(now.toISOString()),
   ]);
 
   const countByDate = new Map(
@@ -385,7 +534,7 @@ async function loadHomeStats(): Promise<HomeStats> {
     weekListeningSeconds: weekListening,
     totalListeningSeconds: totalListening,
     cardsMastered,
-    cardsDueToday: dueCards.length,
+    cardsDueToday: dueCards,
   };
 }
 
@@ -393,15 +542,12 @@ function buildHeatmapDates(today: Date): string[] {
   // Anchor on the Monday of the current week, then walk back
   // (HEATMAP_WEEKS - 1) full weeks. The grid reads left→right as
   // oldest→newest week; each column is M..S top→bottom.
-  const thisMonday = startOfWeekMonday(today);
-  const start = new Date(thisMonday);
-  start.setUTCDate(thisMonday.getUTCDate() - (HEATMAP_WEEKS - 1) * 7);
+  const thisMonday = startOfLocalWeekMonday(today);
+  const start = addLocalDays(thisMonday, -(HEATMAP_WEEKS - 1) * 7);
 
   const dates: string[] = [];
   for (let i = 0; i < HEATMAP_DAYS; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    dates.push(isoDay(d));
+    dates.push(localDateKey(addLocalDays(start, i)));
   }
   return dates;
 }
@@ -438,20 +584,6 @@ function levelColor(count: number): string {
   if (count === 1) return '#FBE3B5';
   if (count === 2) return '#F2C572';
   return '#E8A84A'; // accent
-}
-
-function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function startOfWeekMonday(d: Date): Date {
-  // UTC-based to match how stats rows are keyed (toISOString().slice(0,10)).
-  const monday = new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
-  );
-  const dayOfWeek = (monday.getUTCDay() + 6) % 7; // Mon=0..Sun=6
-  monday.setUTCDate(monday.getUTCDate() - dayOfWeek);
-  return monday;
 }
 
 function formatMinutes(seconds: number): string {
@@ -645,6 +777,14 @@ const styles = StyleSheet.create({
   accountRowText: {
     ...text.body,
     fontWeight: '500',
+  },
+  accountRowCopy: {
+    flex: 1,
+  },
+  accountRowHint: {
+    ...text.caption,
+    color: colors.textTertiary,
+    marginTop: 2,
   },
 
   // ── Nickname edit modal ────────────────────────────────────────

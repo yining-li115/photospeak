@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -19,11 +19,17 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
-import { listCardsDueBy, updateCard } from '../../../src/db/cards';
-import { incrementCardsReviewed } from '../../../src/db/stats';
+import {
+  commitCardReview,
+  countCardsDueBy,
+  listCardsDueBy,
+} from '../../../src/db/cards';
 import { scheduleCard, type CardRating } from '../../../src/srs/fsrs';
 import { colors, radius, spacing, text } from '../../../src/theme';
 import type { Card as CardModel } from '../../../src/types';
+import { localDateKey } from '../../../src/utils/local-date';
+
+const REVIEW_QUEUE_PAGE_SIZE = 50;
 
 const RATINGS: {
   label: string;
@@ -39,21 +45,38 @@ const RATINGS: {
 
 export default function CardsScreen() {
   const [dueCards, setDueCards] = useState<CardModel[]>([]);
+  const [initialDueCount, setInitialDueCount] = useState(0);
   const [reviewedToday, setReviewedToday] = useState(0);
   const [loading, setLoading] = useState(true);
   const [flipped, setFlipped] = useState(false);
+  const [reviewPending, setReviewPending] = useState(false);
+  const reviewLock = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        const now = new Date().toISOString();
-        const due = await listCardsDueBy(now);
-        if (!cancelled) {
-          setDueCards(due);
-          setReviewedToday(0);
-          setFlipped(false);
-          setLoading(false);
+        try {
+          const now = new Date().toISOString();
+          const [due, count] = await Promise.all([
+            listCardsDueBy(now, REVIEW_QUEUE_PAGE_SIZE),
+            countCardsDueBy(now),
+          ]);
+          if (!cancelled) {
+            setDueCards(due);
+            setInitialDueCount(count);
+            setReviewedToday(0);
+            setFlipped(false);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            Alert.alert(
+              'Could not load cards',
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        } finally {
+          if (!cancelled) setLoading(false);
         }
       })();
       return () => {
@@ -62,29 +85,60 @@ export default function CardsScreen() {
     }, [])
   );
 
-  const totalToday = dueCards.length + reviewedToday;
-  const remaining = dueCards.length;
+  const totalToday = initialDueCount;
+  const remaining = Math.max(0, initialDueCount - reviewedToday);
   const progress = totalToday === 0 ? 0 : reviewedToday / totalToday;
   const currentCard = dueCards[0];
 
   const handleRate = async (rating: CardRating) => {
     const card = currentCard;
-    if (!card) return;
-
-    setDueCards((prev) => prev.slice(1));
-    setReviewedToday((n) => n + 1);
-    setFlipped(false);
+    if (!card || reviewLock.current) return;
+    reviewLock.current = true;
+    setReviewPending(true);
 
     try {
-      const update = scheduleCard(card, rating);
-      await updateCard(card.id, update);
-      const today = new Date().toISOString().slice(0, 10);
-      await incrementCardsReviewed(today);
+      const reviewedAt = new Date();
+      const update = scheduleCard(card, rating, reviewedAt);
+      await commitCardReview(
+        card.id,
+        update,
+        localDateKey(reviewedAt),
+        card.fsrs_last_review_at
+      );
+
+      const nextReviewed = reviewedToday + 1;
+      const needsAnotherPage =
+        dueCards.length === 1 && nextReviewed < initialDueCount;
+      setDueCards((previous) =>
+        previous.filter((item) => item.id !== card.id)
+      );
+      setReviewedToday(nextReviewed);
+      setFlipped(false);
+
+      if (needsAnotherPage) {
+        try {
+          const nextPage = await listCardsDueBy(
+            new Date().toISOString(),
+            REVIEW_QUEUE_PAGE_SIZE
+          );
+          setDueCards(nextPage.filter((item) => item.id !== card.id));
+        } catch (error) {
+          Alert.alert(
+            'Review saved',
+            `The next cards could not be loaded: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
     } catch (e) {
       Alert.alert(
         'Could not save review',
         e instanceof Error ? e.message : String(e)
       );
+    } finally {
+      reviewLock.current = false;
+      setReviewPending(false);
     }
   };
 
@@ -122,7 +176,9 @@ export default function CardsScreen() {
               key={currentCard.id}
               card={currentCard}
               flipped={flipped}
-              onFlip={() => setFlipped((f) => !f)}
+              onFlip={() => {
+                if (!reviewPending) setFlipped((f) => !f);
+              }}
             />
             {flipped ? (
               <View style={styles.ratingRow}>
@@ -130,10 +186,12 @@ export default function CardsScreen() {
                   <Pressable
                     key={r.label}
                     onPress={() => handleRate(r.rating)}
+                    disabled={reviewPending}
                     style={({ pressed }) => [
                       styles.ratingPill,
                       { backgroundColor: r.bg },
-                      pressed && { opacity: 0.7 },
+                      reviewPending && { opacity: 0.5 },
+                      pressed && !reviewPending && { opacity: 0.7 },
                     ]}
                   >
                     <Text style={[styles.ratingLabel, { color: r.fg }]}>

@@ -1,11 +1,15 @@
-import * as Sentry from '@sentry/react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useCallback, useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import TrackPlayer from 'react-native-track-player';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
+import { AccountRuntimeEffects } from '../src/components/AccountRuntimeEffects';
 import { AuthProvider, useAuth } from '../src/context/auth';
 import { PlayerProvider } from '../src/context/player';
+import { initializeSentryIfEnabled } from '../src/monitoring/sentry';
+import { readCurrentConsent } from '../src/privacy/consent';
+import { loadDiagnosticsPreference } from '../src/privacy/diagnostics';
 import { playbackService } from '../src/services/playback-service';
 
 // Register the rntp background service at module load — must happen
@@ -13,34 +17,58 @@ import { playbackService } from '../src/services/playback-service';
 // component tree (the service runs in a separate JS context).
 TrackPlayer.registerPlaybackService(() => playbackService);
 
-// Crash + error reporting. Only initializes when EXPO_PUBLIC_SENTRY_DSN
-// is set, so dev / pre-Sentry-account builds skip it cleanly. Init at
-// module load so it captures errors that happen during the very first
-// render (e.g. SecureStore native module failing to link).
-const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
-if (SENTRY_DSN) {
-  Sentry.init({
-    dsn: SENTRY_DSN,
-    environment: __DEV__ ? 'development' : 'production',
-    // Lower trace sampling in production — we mainly care about
-    // errors, not every span. Bump if you start using Sentry's
-    // performance dashboards.
-    tracesSampleRate: __DEV__ ? 1.0 : 0.2,
-  });
-}
-
 function RootLayout() {
+  const [dataRevision, setDataRevision] = useState(0);
+  const handleLegacyDataImported = useCallback(
+    () => setDataRevision((value) => value + 1),
+    []
+  );
+
+  useEffect(() => {
+    // Diagnostics are a separate, optional preference. Accepting the privacy
+    // policy is necessary for sign-in, but must not silently opt a new device
+    // into analytics or crash reporting.
+    void readCurrentConsent()
+      .then((consent) =>
+        consent ? loadDiagnosticsPreference(false) : false
+      )
+      .then((enabled) => {
+        if (enabled) initializeSentryIfEnabled();
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          <PlayerProvider>
-            <RootStack />
-            <StatusBar style="auto" />
-          </PlayerProvider>
+          <AccountScopedRuntime
+            dataRevision={dataRevision}
+            onLegacyDataImported={handleLegacyDataImported}
+          />
         </AuthProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>
+  );
+}
+
+function AccountScopedRuntime({
+  dataRevision,
+  onLegacyDataImported,
+}: {
+  dataRevision: number;
+  onLegacyDataImported: () => void;
+}) {
+  const { user } = useAuth();
+  return (
+    <PlayerProvider
+      key={user?.id ?? 'signed-out'}
+      ownerId={user?.id ?? null}
+    >
+      <AccountRuntimeEffects onLegacyDataImported={onLegacyDataImported} />
+      <RootStack key={dataRevision} />
+      <StatusBar style="auto" />
+    </PlayerProvider>
   );
 }
 
@@ -70,4 +98,4 @@ function RootStack() {
 // Wrap the root in Sentry's ErrorBoundary HOC when initialized so
 // uncaught render errors flow up to the dashboard. Falls through
 // transparently in dev / no-DSN setups.
-export default SENTRY_DSN ? Sentry.wrap(RootLayout) : RootLayout;
+export default RootLayout;

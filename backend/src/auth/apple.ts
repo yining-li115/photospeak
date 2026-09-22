@@ -30,9 +30,14 @@ export async function verifyAppleIdentityToken(
   const { payload } = await jwtVerify(identityToken, APPLE_JWKS, {
     issuer: APPLE_ISSUER,
     audience,
+    algorithms: ['RS256'],
   });
 
-  if (typeof payload.sub !== 'string') {
+  if (
+    typeof payload.sub !== 'string' ||
+    payload.sub.length === 0 ||
+    payload.sub.length > 255
+  ) {
     throw new Error('Apple token missing sub claim');
   }
 

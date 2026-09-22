@@ -32,9 +32,6 @@ export default function PhoneInputScreen() {
     try {
       await authApi.sendCode(trimmed);
       router.push({
-        // Expo Router's typed routes regenerate at metro startup; the
-        // (auth) group hasn't been picked up yet at type-check time.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         pathname: '/(auth)/verify' as any,
         params: { phone: trimmed },
       });

@@ -9,8 +9,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/ai/contracts.test.ts src/ai/idempotency.test.ts src/ai/openai-compatible-provider.test.ts src/ai/volcengine-tts-provider.test.ts src/auth/account-deletion-policy.test.ts src/auth/apple-compensation.test.ts src/auth/apple-login-reservation-policy.test.ts src/auth/apple-server.test.ts src/auth/deletion-receipt.test.ts src/auth/jwt.test.ts src/auth/phone-account-service.test.ts src/auth/recovery-policy.test.ts src/auth/refresh-replay.test.ts src/auth/session-policy.test.ts src/db/migrations.test.ts src/middleware/client-version.test.ts src/services/account-retention.test.ts src/services/graceful-shutdown.test.ts src/transcription/volcengine-protocol.test.ts src/transcription/volcengine-provider.test.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "accounts:purge": "tsx src/jobs/purge-deleted-accounts.ts"
   },
   "dependencies": {
     "@alicloud/dypnsapi20170525": "^2.0.0",
@@ -24,6 +26,7 @@
     "jose": "^5.9.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.0",
+    "ws": "^8.20.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -33,8 +36,7 @@
     "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.28.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "ws": "^8.20.0"
+    "typescript": "^5.7.0"
   },
   "engines": {
     "node": ">=20"

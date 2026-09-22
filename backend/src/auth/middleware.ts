@@ -1,104 +1,146 @@
 import type { Context, MiddlewareHandler } from 'hono';
+import { and, eq, gt, isNull } from 'drizzle-orm';
+import { db, schema } from '../db/client.js';
 import { verifyToken } from './jwt.js';
 
-/**
- * Hono variables set by `requireAuth` so handlers can read the
- * authenticated user id without re-decoding the token.
- */
 export type AuthVars = {
   userId: string;
-  /** True when the request used the legacy APP_SHARED_TOKEN bearer
-   *  instead of a per-user JWT. Lets us reject deprecated paths
-   *  (like /auth/me) when no real user is identified. */
-  isLegacyToken: boolean;
+  sessionId: string;
+  authenticatedAt: Date;
+  plan: string;
 };
 
-/**
- * Emit one structured JSON line per authed request so we can grep PM2
- * logs for legacy-vs-jwt traffic mix. Drives the S1 sunset decision —
- * once legacy traffic decays below threshold, the legacy branch in
- * `requireAuth` can be removed.
- */
-function logAuth(
-  c: Context,
-  mode: 'jwt' | 'legacy',
-  userId: string
-): void {
+function logAuth(c: Context, userId: string): void {
   console.log(
     JSON.stringify({
       ts: new Date().toISOString(),
       event: 'auth',
       path: c.req.path,
       method: c.req.method,
-      mode,
+      mode: 'jwt',
       userId,
       clientVersion: c.req.header('x-client-version') || '',
       clientPlatform: c.req.header('x-client-platform') || '',
-      userAgent: (c.req.header('user-agent') || '').slice(0, 120),
-      ip:
-        c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-        c.req.header('x-real-ip') ||
-        '',
     })
   );
 }
 
 /**
- * Standard auth gate for /api/*. Accepts:
- *   1. A per-user JWT issued by /auth/* (the long-term path)
- *   2. The legacy APP_SHARED_TOKEN bearer (kept until every shipped
- *      mobile build has been replaced; remove once all clients use JWT).
+ * Authenticate a PhotoSpeak access token and verify that its owner is still
+ * active. The database lookup is deliberate: account deletion takes effect
+ * immediately rather than waiting for a stateless JWT to expire.
  */
-export function requireAuth(legacySharedToken?: string): MiddlewareHandler<{
-  Variables: AuthVars;
-}> {
+export function requireUser(options?: {
+  /** Only the deletion endpoint may resume a durable in-progress saga. */
+  allowDeleting?: boolean;
+}): MiddlewareHandler<{ Variables: AuthVars }> {
   return async (c, next) => {
     const header = c.req.header('authorization');
     if (!header || !header.startsWith('Bearer ')) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
-    const token = header.slice(7);
-
-    if (legacySharedToken && token === legacySharedToken) {
-      c.set('userId', '');
-      c.set('isLegacyToken', true);
-      logAuth(c, 'legacy', '');
-      await next();
-      return;
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_ACCESS_EXPIRED' },
+        401
+      );
     }
 
+    let payload;
     try {
-      const payload = verifyToken(token, 'access');
-      c.set('userId', payload.sub);
-      c.set('isLegacyToken', false);
-      logAuth(c, 'jwt', payload.sub);
-      await next();
+      payload = verifyToken(header.slice(7), 'access');
     } catch {
-      return c.json({ error: 'unauthorized' }, 401);
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_ACCESS_EXPIRED' },
+        401
+      );
     }
-  };
-}
 
-/**
- * Stricter variant for endpoints that need a real identified user
- * (no legacy shared token). Use this for /auth/me, /auth/logout, and
- * anything that writes per-user data.
- */
-export function requireUser(): MiddlewareHandler<{ Variables: AuthVars }> {
-  return async (c, next) => {
-    const header = c.req.header('authorization');
-    if (!header || !header.startsWith('Bearer ')) {
-      return c.json({ error: 'unauthorized' }, 401);
+    const [activeUser] = await db
+      .select({
+        id: schema.users.id,
+        sessionId: schema.authSessions.id,
+        authenticatedAt: schema.authSessions.authenticatedAt,
+        plan: schema.userEntitlements.plan,
+        entitlementStatus: schema.userEntitlements.status,
+        currentPeriodEnd: schema.userEntitlements.currentPeriodEnd,
+      })
+      .from(schema.users)
+      .innerJoin(
+        schema.authSessions,
+        and(
+          eq(schema.authSessions.id, payload.sid),
+          eq(schema.authSessions.userId, schema.users.id),
+          isNull(schema.authSessions.revokedAt),
+          gt(schema.authSessions.expiresAt, new Date())
+        )
+      )
+      .leftJoin(
+        schema.userEntitlements,
+        eq(schema.userEntitlements.userId, schema.users.id)
+      )
+      .where(
+        and(
+          eq(schema.users.id, payload.sub),
+          isNull(schema.users.deletedAt),
+          options?.allowDeleting
+            ? undefined
+            : eq(schema.users.deletionState, 'active')
+        )
+      )
+      .limit(1);
+    if (!activeUser) {
+      // A deletion request can commit and revoke the session after the mobile
+      // client sent it but before the HTTP response reaches the phone. Return
+      // an authenticated account-state signal so that a later retry/startup
+      // can finish the already-authorized local wipe without guessing from a
+      // generic 401. A merely revoked/expired session for an active account
+      // still receives the ordinary AUTH_ACCESS_EXPIRED response below.
+      const [account] = await db
+        .select({
+          deletedAt: schema.users.deletedAt,
+          deletionState: schema.users.deletionState,
+        })
+        .from(schema.users)
+        .where(eq(schema.users.id, payload.sub))
+        .limit(1);
+      if (account?.deletedAt || account?.deletionState === 'deleted') {
+        return c.json(
+          { error: 'account deleted', code: 'AUTH_ACCOUNT_DELETED' },
+          410
+        );
+      }
+      if (account?.deletionState === 'deleting') {
+        return c.json(
+          {
+            error: 'account deletion is in progress',
+            code: 'AUTH_ACCOUNT_DELETING',
+          },
+          409
+        );
+      }
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_ACCESS_EXPIRED' },
+        401
+      );
     }
-    const token = header.slice(7);
-    try {
-      const payload = verifyToken(token, 'access');
-      c.set('userId', payload.sub);
-      c.set('isLegacyToken', false);
-      logAuth(c, 'jwt', payload.sub);
-      await next();
-    } catch {
-      return c.json({ error: 'unauthorized' }, 401);
+    if (
+      Math.abs(
+        activeUser.authenticatedAt.getTime() - payload.auth_time * 1_000
+      ) >= 1_000
+    ) {
+      return c.json(
+        { error: 'unauthorized', code: 'AUTH_ACCESS_EXPIRED' },
+        401
+      );
     }
+
+    c.set('userId', payload.sub);
+    c.set('sessionId', activeUser.sessionId);
+    c.set('authenticatedAt', activeUser.authenticatedAt);
+    const entitlementActive =
+      activeUser.entitlementStatus === 'active' &&
+      (!activeUser.currentPeriodEnd ||
+        activeUser.currentPeriodEnd.getTime() > Date.now());
+    c.set('plan', entitlementActive ? activeUser.plan || 'free' : 'free');
+    logAuth(c, payload.sub);
+    await next();
   };
 }

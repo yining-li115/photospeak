@@ -1,41 +1,102 @@
-import { deleteCardsBySession } from '../db/cards';
-import { deleteSession } from '../db/sessions';
-import { deleteSessionAudio } from '../storage/audio';
-import { deletePhotoFiles } from '../storage/photos';
-import { deleteRecording } from '../storage/recordings';
+import { Directory, File, Paths } from 'expo-file-system';
+import {
+  deleteOwnerRows,
+  deleteSessionRows,
+  listOwnerStorageFiles,
+  type SessionStorageFiles,
+} from '../db/sessions';
+import {
+  clearOwnerDeletionPending,
+  listCommittedOwnerDeletions,
+} from '../db/deletions';
+import { requireCurrentOwner } from '../db/owner';
+import { deleteOwnerStorage } from '../storage/owner-path';
+import { resolveStoragePath } from '../storage/resolve';
 
 /**
- * Cascade-delete a session and everything that hangs off it:
- *   - cards generated from this session
- *   - per-sentence podcast audio files
- *   - the original recording wav
- *   - the photo + thumbnail
- *   - the sessions row itself
- *
- * Stats rows are intentionally left alone — historical listening time
- * and review counts shouldn't shrink when a single source goes away.
- *
- * Order matters a little: we delete the row last so that even if a
- * file delete throws, the row is still around for a retry. File
- * deletes are best-effort (each catches its own errors) so a missing
- * file doesn't block the rest.
+ * Delete the relational graph in one transaction, then garbage-collect files.
+ * If a file operation fails, no other user's rows are exposed and the orphan
+ * janitor can retry later.
  */
 export async function deleteSessionCascade(sessionId: string): Promise<void> {
-  await deleteCardsBySession(sessionId);
-  try {
-    deleteSessionAudio(sessionId);
-  } catch {
-    /* swallow */
+  const files = await deleteSessionRows(sessionId);
+  if (!files) return;
+  deleteFilesBestEffort(files);
+}
+
+/** Account-deletion hook: purge only the active owner's rows and media. */
+export async function purgeCurrentOwnerLocalData(): Promise<void> {
+  await purgeOwnerLocalData(requireCurrentOwner());
+}
+
+/** Retry-safe purge that does not depend on whichever account is active now. */
+export async function purgeOwnerLocalData(owner: string): Promise<void> {
+  // Read and strictly erase the manifest first. In particular, migrated beta
+  // media can still live in the old global folders and is not covered by the
+  // owner-directory delete. Keeping DB rows until every managed file is gone
+  // means a failed filesystem operation remains retryable via the tombstone.
+  const sessions = await listOwnerStorageFiles(owner);
+  for (const files of sessions) deleteFilesStrict(files);
+  // New media is owner-namespaced, so this also removes interrupted drafts and
+  // stale photo versions that never gained a DB reference.
+  deleteOwnerStorage(owner);
+  await deleteOwnerRows(owner);
+}
+
+/** Resume privacy cleanup recorded before a prior logout/crash. */
+export async function retryPendingLocalDeletions(): Promise<void> {
+  const owners = await listCommittedOwnerDeletions();
+  for (const owner of owners) {
+    try {
+      await purgeOwnerLocalData(owner);
+      await clearOwnerDeletionPending(owner);
+    } catch {
+      // Keep the tombstone. A later launch retries without touching data that
+      // belongs to any other owner.
+    }
   }
-  try {
-    deleteRecording(sessionId);
-  } catch {
-    /* swallow */
+}
+
+function deleteFilesBestEffort(files: SessionStorageFiles): void {
+  for (const uri of [
+    files.photoUri,
+    files.photoThumbnailUri,
+    files.recordingUri,
+    ...files.sentenceAudioUris,
+  ]) {
+    try {
+      deleteManagedFile(uri);
+    } catch {
+      // DB deletion is already committed. Storage maintenance will discover
+      // and remove the now-unreferenced file on a later launch.
+    }
   }
-  try {
-    deletePhotoFiles(sessionId);
-  } catch {
-    /* swallow */
+}
+
+function deleteFilesStrict(files: SessionStorageFiles): void {
+  for (const uri of [
+    files.photoUri,
+    files.photoThumbnailUri,
+    files.recordingUri,
+    ...files.sentenceAudioUris,
+  ]) {
+    deleteManagedFile(uri);
   }
-  await deleteSession(sessionId);
+}
+
+function deleteManagedFile(uri: string): void {
+  if (!uri) return;
+  const resolved = resolveStoragePath(uri);
+  const root = new Directory(Paths.document).uri;
+  if (!resolved.startsWith(root)) return;
+  const relative = resolved.slice(root.length).replace(/^\/+/, '');
+  if (
+    !['audio/', 'photos/', 'thumbnails/', 'recordings/', 'users/'].some(
+      (prefix) => relative.startsWith(prefix)
+    )
+  ) {
+    return;
+  }
+  const file = new File(resolved);
+  if (file.exists) file.delete();
 }

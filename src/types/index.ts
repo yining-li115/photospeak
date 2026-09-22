@@ -49,6 +49,15 @@ export interface Card {
   next_review_at: string;
   stability: number;
   difficulty: number;
+  /** Complete scheduler state. Keeping only stability/difficulty loses
+   * learning/relearning progress and produces incorrect intervals. */
+  fsrs_elapsed_days: number;
+  fsrs_scheduled_days: number;
+  fsrs_learning_steps: number;
+  fsrs_reps: number;
+  fsrs_lapses: number;
+  fsrs_state: 0 | 1 | 2 | 3;
+  fsrs_last_review_at: string | null;
   review_history: ReviewRecord[];
 }
 

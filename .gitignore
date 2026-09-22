@@ -31,8 +31,9 @@ yarn-error.*
 *.pem
 
 # local env files
-.env
-.env*.local
+.env*
+!.env.example
+!backend/.env.example
 
 # typescript
 *.tsbuildinfo
@@ -56,4 +57,3 @@ ChatGPT Image*.jpg
 *.pdf
 logo_ps.png
 mimo.pdf
-

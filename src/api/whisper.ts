@@ -1,8 +1,8 @@
 /**
  * Local-only Whisper client (dev convenience).
  *
- * Production STT streams PCM directly from the client to DashScope
- * paraformer-realtime-v2 over WebSocket — see `aliyun-asr.ts` and
+ * Production STT streams PCM through PhotoSpeak's constrained WebSocket
+ * relay to the configured streaming provider — see `streaming-asr.ts` and
  * `src/hooks/useAudioRecorder.ts`. This file is dev-only: it
  * speaks to a Whisper-compatible HTTP endpoint set via
  * `EXPO_PUBLIC_WHISPER_ENDPOINT` (typically
@@ -15,7 +15,7 @@
  * removed in P10.
  *
  * Anyone shipping to TestFlight should leave
- * `EXPO_PUBLIC_STT_PROVIDER` unset (or set it to `aliyun-qwen`) so
+ * `EXPO_PUBLIC_STT_PROVIDER` unset (or set it to `backend-streaming`) so
  * this file is never reached.
  */
 const MODEL = 'whisper-1';
@@ -34,13 +34,16 @@ export async function transcribeAudio(
   recordingUri: string,
   options: { language?: string } = {}
 ): Promise<string> {
+  if (!__DEV__) {
+    throw new WhisperError('本地 Whisper 仅允许在开发版本中使用');
+  }
   const endpoint = process.env.EXPO_PUBLIC_WHISPER_ENDPOINT?.trim();
   if (!endpoint) {
     throw new WhisperError(
       'Local Whisper endpoint is not configured. Either set ' +
         'EXPO_PUBLIC_WHISPER_ENDPOINT to a local server URL, or set ' +
-        'EXPO_PUBLIC_STT_PROVIDER=aliyun-qwen to use the backend ' +
-        'proxy (production path).'
+        'EXPO_PUBLIC_STT_PROVIDER=backend-streaming to use the backend ' +
+        'relay (production path).'
     );
   }
 
@@ -55,15 +58,29 @@ export async function transcribeAudio(
   form.append('language', options.language ?? 'en');
   form.append('response_format', 'text');
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    body: form,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new WhisperError('本地 Whisper 请求超时');
+    }
+    throw new WhisperError(
+      error instanceof Error ? error.message : '本地 Whisper 连接失败'
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
-    const body = await safeReadText(response);
     throw new WhisperError(
-      `Whisper request failed (${response.status}): ${body}`,
+      `Whisper request failed (${response.status})`,
       response.status
     );
   }
@@ -93,13 +110,5 @@ function mimeTypeFromUri(uri: string): string {
       return 'audio/aac';
     default:
       return 'audio/m4a';
-  }
-}
-
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return '<no body>';
   }
 }
