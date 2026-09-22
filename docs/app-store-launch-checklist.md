@@ -53,6 +53,9 @@ Last updated: 2026-09-22
   installed `1.0.0 (10)` on 2026-09-22
 - Paid Apps Agreement is active, the configured bank account is available, and
   the existing US tax forms are active
+- The account holder confirmed completion of the China mainland compliance
+  information required by State Council Decree No. 810 on 2026-09-22. No
+  identity or tax identifier is retained in the repository.
 - Production Volcengine connectivity verified on 2026-09-22 without exposing
   credentials or retaining probe media:
   - Ark accepted a bounded multimodal image-and-text request
@@ -114,9 +117,6 @@ Last updated: 2026-09-22
 - Submission for review: intentionally not performed.
 - Any future identity, tax-declaration, or bank-detail changes remain owner
   tasks and are intentionally never inferred or submitted by automation.
-- China mainland tax-compliance information for State Council Decree No. 810 is
-  currently missing in App Store Connect. This is an owner/legal task because
-  its declarations cannot be inferred.
 
 ## Product decisions to resolve
 
