@@ -18,9 +18,9 @@ they are not a monthly product quota.
 | --- | --- | --- |
 | Free | ¥0 | Five completed sessions per calendar month, one follow-up per session |
 | Plus monthly (Mainland China) | ¥18 | Unlimited personal sessions and follow-ups; local listening/cards/history |
-| Plus annual (Mainland China) | ¥148 | Same entitlement; highlight annual on the paywall |
+| Plus annual (Mainland China) | ¥128 | Same entitlement; highlight annual on the paywall |
 | Plus monthly (United States baseline) | US$9.99 | Local App Store price points vary by storefront |
-| Plus annual (United States baseline) | US$79.99 | Local App Store price points vary by storefront |
+| Plus annual (United States baseline) | US$99.99 | Local App Store price points vary by storefront |
 
 Do not add a free trial while the free tier already demonstrates the complete
 workflow. If acquisition needs a stronger launch hook, test a ¥9.9 first month

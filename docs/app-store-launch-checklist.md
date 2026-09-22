@@ -14,10 +14,27 @@ Last updated: 2026-09-22
 - Availability: public distribution in all 175 territories
 - Release mode: manual release
 - China mainland ICP filing: `津ICP备2026003241号-2A`
+- App Privacy questionnaire completed and published
+- App Store Server Notifications V2 production and sandbox URLs:
+  `https://api.dailyphotospeak.cn/subscriptions/apple/notifications`
+- Billing grace period: 16 days, all renewals, production and sandbox
+- PhotoSpeak Plus subscription group and US English group localization
+- Monthly subscription:
+  - Product ID: `com.yining.photospeak.plus.monthly`
+  - Available in all 175 storefronts and future storefronts
+  - US reference price: USD 9.99/month
+  - China mainland price: CNY 18/month
+  - US English display name and description
+- Annual subscription:
+  - Product ID: `com.yining.photospeak.plus.annual`
+  - Available in all 175 storefronts and future storefronts
+  - US reference price: USD 99.99/year
+  - China mainland price: CNY 128/year
+  - US English display name and description
 
 ## Completed in the repository
 
-- Next iOS build number: 9
+- Next iOS build number: 10
 - Export-compliance declaration: `ITSAppUsesNonExemptEncryption = false`
 - Explicit privacy-policy/user-agreement consent gate before sign-in
 - Optional diagnostics are off by default
@@ -40,23 +57,18 @@ Last updated: 2026-09-22
 - Run a real-device end-to-end test: sign-in, photo selection, recording,
   transcription, AI feedback, TTS playback, follow-up, history, and account
   deletion.
-- Archive and upload build 9, then test it through TestFlight. Do not select any
+- Archive and upload build 10, then test it through TestFlight. Do not select any
   older App Store build for review.
 
 ## App Store Connect items still intentionally pending
 
-- App privacy questionnaire: complete only after the deployed provider regions,
-  retention, and diagnostics configuration are verified.
-- Privacy, support, and marketing URLs: enter only after the public routes above
-  are deployed and reachable.
 - App Review contact information and review notes: require the owner's final
   contact details and a verified reviewer login path.
 - Screenshots/app previews: paused until requested; use real app UI captures.
 - Accessibility declarations: do not claim support before VoiceOver, Dynamic
   Type, contrast, and reduced-motion testing.
-- Subscription products: do not create until StoreKit 2 entitlements, server
-  transaction verification, App Store Server Notifications, restore purchases,
-  and paywall/legal copy are implemented and tested.
+- Subscription review screenshots remain required before the subscription
+  products can be added to the first app-version submission.
 - Submission for review: intentionally not performed.
 
 ## Product decisions to resolve
@@ -65,8 +77,9 @@ Last updated: 2026-09-22
   includes iPhone and iPad (`TARGETED_DEVICE_FAMILY = 1,2`).
 - Decide whether the iPhone/iPad app should also be available on Apple-silicon
   Macs. App Store Connect currently permits it, but it has not been certified.
-- Finalize Plus regional prices. Avoid using the same numeric value for every
-  currency; use purchasing-power tiers or Apple's automatic equivalents.
+- Decide whether Simplified Chinese subscription product and subscription-group
+  localizations should be added in addition to the configured US English
+  localizations.
 - “Unlimited” Plus should be marketed as no visible session/follow-up quota,
   while retaining abuse, concurrency, and daily cost safety limits in the
   backend.

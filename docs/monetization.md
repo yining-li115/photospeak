@@ -30,9 +30,9 @@
 |------|------|------|
 | 免费 | ¥0 | 每月 5 次已完成 session，1 次 follow-up/session，本地存储 |
 | Plus 月订阅（中国大陆） | ¥18/月 | 正常个人学习不限 session 和 follow-up；本地历史/音频 |
-| Plus 年订阅（中国大陆） | ¥148/年 | 同上，折合约 ¥12.3/月 |
+| Plus 年订阅（中国大陆） | ¥128/年 | 同上，折合约 ¥10.7/月 |
 | Plus 月订阅（美国基准） | US$9.99/月 | 其他地区使用当地 App Store 价位 |
-| Plus 年订阅（美国基准） | US$79.99/年 | 其他地区使用当地 App Store 价位 |
+| Plus 年订阅（美国基准） | US$99.99/年 | 其他地区使用当地 App Store 价位 |
 
 首月 ¥9.9 只作为后续可选的 introductory offer / offer code 测试，
 不作为永久续订价。当前版本没有云端学习内容同步，因此不能在付费页承诺云端音频。
@@ -65,22 +65,22 @@
 ## 待建功能清单（按依赖关系排序）
 
 ### M1 · 苹果内购 + 订阅状态 ⭐ 必做基础
-- [ ] 客户端：集成 StoreKit 2（可用支持 StoreKit 2 的 React Native IAP 适配层或自有 Expo module），购买后把签名交易发给后端
-- [ ] App Store Connect：创建月订阅 + 年订阅两个 product；配置 Subscription Group + Subscription Levels
-- [ ] 后端：接收 StoreKit 2 signed transaction，以 App Store Server API 复核 transaction/originalTransactionId 后写入独立 entitlement 与 transaction 表
-- [x] DB 已有独立 `user_entitlements` 基础表；仍需 transaction、notification 去重日志及账号转移策略
-- [ ] App Store Server Notifications V2（续费、取消、退款、billing retry、grace period）→ 验证 JWS 后幂等入库
-- [ ] 客户端轮询订阅状态（启动时 + 进 paywall 前），从后端拿权威值，不信任本地缓存
+- [x] 客户端：通过 `expo-iap` 集成 StoreKit 2，购买后把签名交易发给后端
+- [x] App Store Connect：创建月订阅 + 年订阅两个 product；配置 Subscription Group + Subscription Levels
+- [x] 后端：接收 StoreKit 2 signed transaction，验证 Apple JWS 后写入独立 entitlement 与 transaction 表
+- [x] DB 已有独立 entitlement、transaction 和 notification 去重日志及账号绑定策略
+- [x] App Store Server Notifications V2（续费、取消、退款、billing retry、grace period）验证 JWS 后幂等入库
+- [x] 客户端轮询订阅状态（启动时 + 进 paywall 前），从后端拿权威值，不信任本地缓存
 - **难点**：Sandbox/Production 环境、恢复购买、退款、家庭共享、宽限期、重复通知与账号迁移都必须端到端覆盖；客户端本地标记不能成为权威权益。
 - **参考**：Apple [In-App Purchase](https://developer.apple.com/in-app-purchase/) 与 [App Store Server Notifications](https://developer.apple.com/documentation/appstoreservernotifications)
 
 ### M2 · 免费层用量限制
-- [ ] DB 表 `user_usage_monthly(user_id, year_month, session_count, followup_count_by_session)`
-- [ ] 后端 `/api/analyze` 调用前 check：如果 user 是 free + 当月 session ≥ 5 → 返回 402 + 错误码 `quota_exceeded`
-- [ ] follow-up 一样 check：免费用户当前 session 已有 1 次 follow-up → 拦截；Plus 不展示或执行月度次数配额
-- [ ] 客户端拦到 402 → 弹 paywall（M6）
-- [ ] 客户端首屏 / Home 显示"本月已用 X/5 次"
-- [ ] 月底自动重置 — cron job `0 0 1 * *` 直接清表（或用 `year_month` 字段天然分区，不用清）
+- [x] DB 使用按月键控的服务器权威免费额度记录与原子预留
+- [x] 分析调用前检查免费用户当月已完成 session 与未决预留
+- [x] 追问调用前检查免费用户当前 session 的追问次数；Plus 不展示月度次数配额
+- [x] 客户端收到额度错误后展示 paywall
+- [x] Home 展示免费计划当月剩余额度
+- [x] 使用 `year_month` 天然分区，无需月底清表
 - **依赖**：M1（要知道用户付费状态才能区分免费/付费）
 - **跟 optimization 的交叉**：[P16](optimization.md#p16--per-user-每日配额成本上限) 是按 cost 控成本，M2 是按 session 数控产品体验。两者数据模型相似（Redis 计数器），可共享基础设施
 
@@ -107,7 +107,7 @@
 
 ### M5 · 内测优惠码
 - [ ] App Store Connect → Promo Codes：生成 20 个一次性兑换码 + 25 个 50% off 月订阅码作为备用
-- [ ] **或者**：用 Apple [Offer Codes](https://developer.apple.com/app-store/subscriptions/) 功能创建“首月 ¥9.9”的限时促销；通过 URL `https://apps.apple.com/redeem?ctx=offercodes&id=APP_ID&code=CODE` 分发，并清楚显示优惠结束后的 ¥18/月或 ¥148/年续订价
+- [ ] **或者**：用 Apple [Offer Codes](https://developer.apple.com/app-store/subscriptions/) 功能创建“首月 ¥9.9”的限时促销；通过 URL `https://apps.apple.com/redeem?ctx=offercodes&id=APP_ID&code=CODE` 分发，并清楚显示优惠结束后的 ¥18/月或 ¥128/年续订价
 - [ ] 客户端识别从 URL 进入的 promo redemption flow（Apple 自动接管）
 - [ ] DB 不需要单独管 promo code，Apple 那边自动 track
 - **依赖**：M1
