@@ -56,17 +56,26 @@ PREV_COMMIT=$(git rev-parse HEAD)
 echo "▶ deploy starting"
 echo "  · prev commit: $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 
+# Annotated deploy tags require an identity. Validate before pulling so a
+# missing server-local Git config cannot leave the checkout updated while the
+# deployment itself never proceeds.
+if [[ -z "$(git config user.name)" || -z "$(git config user.email)" ]]; then
+  echo "✗ repository Git user.name/user.email must be configured before deploy" >&2
+  exit 2
+fi
+
 # ─── pull ───────────────────────────────────────────────────────
 git fetch origin --tags
 git pull --ff-only origin main
 NEW_COMMIT=$(git rev-parse HEAD)
 
 if [[ "$PREV_COMMIT" == "$NEW_COMMIT" ]]; then
-  echo "  · already at latest ($(git rev-parse --short HEAD)) — nothing to deploy"
-  exit 0
+  # A prior attempt may have pulled successfully and then failed before build,
+  # migration, restart, or smoke test. Re-running must finish those steps.
+  echo "  · already at latest ($(git rev-parse --short HEAD)); redeploying idempotently"
+else
+  echo "  · new commit:  $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 fi
-
-echo "  · new commit:  $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 
 # Tag this deploy so future rollbacks are explicit.
 TAG="deploy-$(date -u +%Y%m%d-%H%M%S)"
