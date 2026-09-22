@@ -58,6 +58,10 @@ Last updated: 2026-09-22
   - Ark accepted a bounded multimodal image-and-text request
   - Seed ASR accepted the streaming WebSocket handshake
   - Seed TTS returned a valid non-empty MP3 response
+- A validated same-host PostgreSQL backup was created on the production server,
+  and `/etc/cron.d/photospeak-backup` now runs a daily local backup at 04:17
+  server time with seven-day retention. Its log is rotated weekly. This is an
+  interim recovery path only and does not satisfy the off-host launch gate.
 
 ## Required before selecting a build
 
