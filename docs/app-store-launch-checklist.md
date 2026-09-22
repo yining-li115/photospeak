@@ -47,7 +47,10 @@ Last updated: 2026-09-22
 - Build 10 completed a signed native Xcode archive successfully
 - An Apple Distribution certificate was created for the Yiru Li team
 - Xcode Organizer uploaded build 10 to App Store Connect successfully on
-  2026-09-22; Apple-side processing may take additional time
+  2026-09-22; Apple processing completed and the build is available in
+  TestFlight
+- Paid Apps Agreement is active, the configured bank account is available, and
+  the existing US tax forms are active
 - Production Volcengine connectivity verified on 2026-09-22 without exposing
   credentials or retaining probe media:
   - Ark accepted a bounded multimodal image-and-text request
@@ -60,9 +63,9 @@ Last updated: 2026-09-22
   them in the mobile bundle or repository.
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Wait for Apple to finish processing build 10, assign it to internal
-  TestFlight testing, and complete the real-device plan. Do not select any older
-  App Store build for review.
+- Publish the build 10 TestFlight testing notes, assign it to the internal
+  testing group, and complete the real-device plan. Do not select any older App
+  Store build for review.
 
 ## Required operational launch gates
 
@@ -87,9 +90,11 @@ Last updated: 2026-09-22
 - Subscription review screenshots remain required before the subscription
   products can be added to the first app-version submission.
 - Submission for review: intentionally not performed.
-- Paid Apps Agreement, banking, and tax status must be verified by the account
-  holder; identity, tax declarations, and bank details are intentionally never
-  inferred or submitted by automation.
+- Any future identity, tax-declaration, or bank-detail changes remain owner
+  tasks and are intentionally never inferred or submitted by automation.
+- China mainland tax-compliance information for State Council Decree No. 810 is
+  currently missing in App Store Connect. This is an owner/legal task because
+  its declarations cannot be inferred.
 
 ## Product decisions to resolve
 
