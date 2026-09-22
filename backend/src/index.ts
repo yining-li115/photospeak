@@ -27,6 +27,10 @@ import {
 } from './ai/volcengine-tts-provider.js';
 import { jwtPublicConfig } from './auth/jwt.js';
 import { type AuthVars } from './auth/middleware.js';
+import {
+  parseAppReviewAccessConfig,
+  type AppReviewAccessConfig,
+} from './auth/app-review-access.js';
 import { checkDatabase, closeDatabase } from './db/client.js';
 import {
   landingHtml,
@@ -64,6 +68,7 @@ interface Env {
    *  app.json. */
   APPLE_BUNDLE_ID: string;
   PHONE_LOGIN_ENABLED: boolean;
+  appReviewAccess: AppReviewAccessConfig;
   TRUST_PROXY: boolean;
   AI_REQUESTS_PER_MINUTE: number;
   AI_GLOBAL_CONCURRENCY: number;
@@ -270,6 +275,12 @@ function readEnv(): Env {
   return {
     APPLE_BUNDLE_ID: e.APPLE_BUNDLE_ID!,
     PHONE_LOGIN_ENABLED: e.PHONE_LOGIN_ENABLED === 'true',
+    appReviewAccess: parseAppReviewAccessConfig({
+      enabled: e.APP_REVIEW_ACCESS_ENABLED,
+      phone: e.APP_REVIEW_PHONE,
+      codeHmac: e.APP_REVIEW_CODE_HMAC,
+      hmacKey: e.JWT_SECRET,
+    }),
     TRUST_PROXY: e.TRUST_PROXY === 'true',
     AI_REQUESTS_PER_MINUTE: positiveInt(e.AI_REQUESTS_PER_MINUTE, 60),
     AI_GLOBAL_CONCURRENCY: positiveInt(e.AI_GLOBAL_CONCURRENCY, 4),
@@ -497,6 +508,7 @@ app.route(
   createAuthRouter({
     appleBundleId: env.APPLE_BUNDLE_ID,
     phoneLoginEnabled: env.PHONE_LOGIN_ENABLED,
+    appReviewAccess: env.appReviewAccess,
     trustProxy: env.TRUST_PROXY,
   })
 );

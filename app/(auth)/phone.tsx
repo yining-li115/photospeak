@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { authApi } from '../../src/api/auth';
+import { isAcceptedPhoneInput } from '../../src/auth/app-review-access';
 import { colors, shadow } from '../../src/theme';
 
 export default function PhoneInputScreen() {
@@ -25,7 +26,7 @@ export default function PhoneInputScreen() {
 
   async function handleSend() {
     const trimmed = phone.trim();
-    if (!/^1[3-9]\d{9}$/.test(trimmed)) {
+    if (!isAcceptedPhoneInput(trimmed)) {
       return Alert.alert('提示', '请输入正确的手机号');
     }
     setLoading(true);

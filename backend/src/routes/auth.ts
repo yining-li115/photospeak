@@ -30,6 +30,11 @@ import {
   completeAppleLogin,
 } from '../auth/apple-account-service.js';
 import { findOrCreatePhoneUser } from '../auth/phone-account-service.js';
+import {
+  isAppReviewPhone,
+  verifyAppReviewCode,
+  type AppReviewAccessConfig,
+} from '../auth/app-review-access.js';
 import { processPendingAccountDeletion } from '../services/apple-deletion-recovery.js';
 import {
   sendVerifyCode,
@@ -53,6 +58,8 @@ interface Config {
   appleBundleId: string;
   /** Master switch for /send-code + /verify (phone path). */
   phoneLoginEnabled: boolean;
+  /** Explicitly enabled, server-only credential used by Apple App Review. */
+  appReviewAccess?: AppReviewAccessConfig;
   /** Only trust X-Forwarded-For when the app is network-isolated behind nginx. */
   trustProxy?: boolean;
   /** Test/alternate implementation hook; production builds from env. */
@@ -382,7 +389,9 @@ export function createAuthRouter(config: Config) {
         return c.json({ error: 'invalid JSON body' }, 400);
       }
       const phone = body.phone;
-      if (!phone || !PHONE_RE.test(phone)) {
+      const isReviewPhone =
+        !!phone && isAppReviewPhone(config.appReviewAccess, phone);
+      if (!phone || (!PHONE_RE.test(phone) && !isReviewPhone)) {
         return c.json({ error: '请输入有效的手机号' }, 400);
       }
 
@@ -400,16 +409,26 @@ export function createAuthRouter(config: Config) {
         );
       }
 
-      try {
-        await sendVerifyCode(phone);
-      } catch (err) {
-        if (err instanceof SmsThrottledError) {
-          return c.json({ error: '发送过于频繁，请稍后再试' }, 429);
+      if (isReviewPhone) {
+        console.info(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'auth.app_review.code_requested',
+            phoneRef: safeLogReference('phone', phone),
+          })
+        );
+      } else {
+        try {
+          await sendVerifyCode(phone);
+        } catch (err) {
+          if (err instanceof SmsThrottledError) {
+            return c.json({ error: '发送过于频繁，请稍后再试' }, 429);
+          }
+          if (err instanceof SmsUnavailableError) {
+            return c.json({ error: '验证码服务暂时不可用' }, 503);
+          }
+          throw err;
         }
-        if (err instanceof SmsUnavailableError) {
-          return c.json({ error: '验证码服务暂时不可用' }, 503);
-        }
-        throw err;
       }
       return c.json({ message: '验证码已发送' });
     }
@@ -456,7 +475,9 @@ export function createAuthRouter(config: Config) {
       }
       const phone = body.phone;
       const code = body.code;
-      if (!phone || !PHONE_RE.test(phone)) {
+      const isReviewPhone =
+        !!phone && isAppReviewPhone(config.appReviewAccess, phone);
+      if (!phone || (!PHONE_RE.test(phone) && !isReviewPhone)) {
         return c.json({ error: '手机号无效' }, 400);
       }
       if (!code || !CODE_RE.test(code)) {
@@ -478,10 +499,14 @@ export function createAuthRouter(config: Config) {
       }
 
       let isValid: boolean;
-      try {
-        isValid = await checkVerifyCode(phone, code);
-      } catch {
-        return c.json({ error: '验证码服务暂时不可用' }, 503);
+      if (isReviewPhone) {
+        isValid = verifyAppReviewCode(config.appReviewAccess, phone, code);
+      } else {
+        try {
+          isValid = await checkVerifyCode(phone, code);
+        } catch {
+          return c.json({ error: '验证码服务暂时不可用' }, 503);
+        }
       }
       if (!isValid) {
         return c.json(
@@ -497,7 +522,9 @@ export function createAuthRouter(config: Config) {
             : '';
         const user = await findOrCreatePhoneUser({
           phone,
-          nickname: suppliedNickname || `用户${phone.slice(-4)}`,
+          nickname:
+            suppliedNickname ||
+            (isReviewPhone ? 'App Review' : `用户${phone.slice(-4)}`),
         });
         await recordConsentReceipt(user.id, consent, 'phone_login');
         return c.json(await issueSession(user));
