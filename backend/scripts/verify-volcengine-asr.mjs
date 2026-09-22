@@ -48,6 +48,7 @@ const timeout = setTimeout(() => {
   socket.terminate();
   process.exit(1);
 }, 15_000);
+let accepted = false;
 
 socket.on('open', () => {
   console.log('[verify] WebSocket open; sending bounded ASR configuration');
@@ -83,7 +84,8 @@ socket.on('open', () => {
 });
 
 socket.on('message', (_data, isBinary) => {
-  if (!isBinary) return;
+  if (!isBinary || accepted) return;
+  accepted = true;
   clearTimeout(timeout);
   console.log('[verify] ASR handshake accepted; closing without user audio');
   socket.send(frame(0x2, 0x2, 0x0, Buffer.alloc(0)));
