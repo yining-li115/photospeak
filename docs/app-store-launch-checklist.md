@@ -34,7 +34,7 @@ Last updated: 2026-09-22
 
 ## Completed in the repository
 
-- Next iOS build number: 10
+- Next iOS build number: 11
 - Export-compliance declaration: `ITSAppUsesNonExemptEncryption = false`
 - Explicit privacy-policy/user-agreement consent gate before sign-in
 - Optional diagnostics are off by default
@@ -44,11 +44,10 @@ Last updated: 2026-09-22
 - TypeScript, lint, mobile policy tests, backend tests, and backend build pass
 - Production landing, health, readiness, privacy, terms, and support routes all
   return HTTP 200
-- Build 10 completed a signed native Xcode archive successfully
+- Build 11 completed a signed native Xcode archive successfully
 - An Apple Distribution certificate was created for the Yiru Li team
-- Xcode Organizer uploaded build 10 to App Store Connect successfully on
-  2026-09-22; Apple processing completed and the build is available in
-  TestFlight
+- Xcode Organizer uploaded build 11 to App Store Connect successfully on
+  2026-09-22; Apple processing was still pending at the final check
 - Build 10 is assigned to the internal testing group; the account-owner tester
   installed `1.0.0 (10)` on 2026-09-22
 - Paid Apps Agreement is active, the configured bank account is available, and
@@ -56,12 +55,18 @@ Last updated: 2026-09-22
 - The account holder confirmed completion of the China mainland compliance
   information required by State Council Decree No. 810 on 2026-09-22. No
   identity or tax identifier is retained in the repository.
+- A dedicated App Review login was implemented and deployed on 2026-09-22.
+  Its non-routable phone identifier and fixed-code flow were verified against
+  production without sending SMS. Only a keyed HMAC is stored in the service
+  environment; the plaintext credential is kept in a root-only server file
+  outside the repository. The account is an ordinary free account, not an
+  administrator.
 - Production Volcengine connectivity verified on 2026-09-22 without exposing
   credentials or retaining probe media:
   - Ark accepted a bounded multimodal image-and-text request
   - Seed ASR accepted the streaming WebSocket handshake
   - Seed TTS returned a valid non-empty MP3 response
-- Repository commit `f16c594` was deployed to production on 2026-09-22. The
+- Repository commit `cdc01b1` was deployed to production on 2026-09-22. The
   post-deploy smoke test passed for health, readiness, public legal/support
   pages, and the unauthenticated transcription guard; the public health route
   stayed healthy after the PM2 rolling restart.
@@ -83,7 +88,8 @@ Last updated: 2026-09-22
 
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Complete the real-device plan against internal TestFlight build 10. The
+- Complete the real-device plan against TestFlight build 11 after Apple finishes
+  processing and the build is assigned to the internal group. The
   optional TestFlight testing notes are still blank. Do not select any older
   App Store build for review.
 
@@ -107,8 +113,10 @@ Last updated: 2026-09-22
 
 ## App Store Connect items still intentionally pending
 
-- App Review contact information and review notes: require the owner's final
-  contact details and a verified reviewer login path.
+- App Review contact information still requires the owner's final contact
+  details. The reviewer login path is implemented, deployed, and verified; its
+  credentials still need to be entered into App Store Connect at submission
+  preparation time.
 - Screenshots/app previews: paused until requested; use real app UI captures.
 - Accessibility declarations: do not claim support before VoiceOver, Dynamic
   Type, contrast, and reduced-motion testing.
@@ -133,7 +141,7 @@ Last updated: 2026-09-22
 
 ## Non-blocking build warning
 
-The build 10 upload completed with missing-dSYM warnings for the precompiled
+The build 11 upload completed with missing-dSYM warnings for the precompiled
 `React.framework`, `ReactNativeDependencies.framework`, and `hermes.framework`.
 This does not block TestFlight or App Store processing, but crashes inside those
 frameworks may be less completely symbolicated. Recheck the Expo/React Native

@@ -44,6 +44,15 @@ the credentials in App Store Connect.
 Never enter a personal Apple Account, developer password, real customer's phone
 number, production API key, or server credential in the review fields.
 
+## Current production status
+
+The review path was configured, deployed, and exercised end to end on
+2026-09-22. The send-code endpoint accepted only the sentinel identifier without
+sending an SMS, and the verify endpoint returned the expected `App Review`
+account. The production credential remains in
+`/root/photospeak-app-review-credential.txt` with mode `0600`; its plaintext is
+not retained in Git, project documentation, command output, or chat.
+
 ## Disable after review
 
 Set `APP_REVIEW_ACCESS_ENABLED=false` in the production backend environment and
