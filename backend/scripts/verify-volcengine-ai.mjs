@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { deflateSync } from 'node:zlib';
+
 /**
  * Bounded real-provider probe for Ark multimodal chat and Volcengine TTS.
  *
@@ -50,8 +52,8 @@ try {
     timeoutMs: timeout,
   });
 
-  // A tiny opaque PNG keeps the probe cheap while proving the configured Ark
-  // model accepts PhotoSpeak's image_url message shape.
+  // A generated opaque PNG keeps the probe deterministic and cheap while
+  // staying above provider minimum-image-size checks.
   const chatResult = await chat.completeText({
     messages: [
       {
@@ -60,7 +62,7 @@ try {
           {
             type: 'image_url',
             image_url: {
-              url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zf88AAAAASUVORK5CYII=',
+              url: solidPngDataUrl(128, 128),
             },
           },
           {
@@ -111,4 +113,53 @@ function positiveInt(value, fallback) {
     process.exit(2);
   }
   return parsed;
+}
+
+function solidPngDataUrl(width, height) {
+  const stride = width * 4 + 1;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * stride;
+    raw[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const pixel = row + 1 + x * 4;
+      raw[pixel] = 255;
+      raw[pixel + 1] = 64;
+      raw[pixel + 2] = 64;
+      raw[pixel + 3] = 255;
+    }
+  }
+
+  const signature = Buffer.from('89504e470d0a1a0a', 'hex');
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  const png = Buffer.concat([
+    signature,
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+function pngChunk(type, data) {
+  const name = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.byteLength, 0);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([name, data])), 0);
+  return Buffer.concat([length, name, data, checksum]);
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
