@@ -48,13 +48,16 @@ Last updated: 2026-09-22
 - An Apple Distribution certificate was created for the Yiru Li team
 - Xcode Organizer uploaded build 10 to App Store Connect successfully on
   2026-09-22; Apple-side processing may take additional time
+- Production Volcengine connectivity verified on 2026-09-22 without exposing
+  credentials or retaining probe media:
+  - Ark accepted a bounded multimodal image-and-text request
+  - Seed ASR accepted the streaming WebSocket handshake
+  - Seed TTS returned a valid non-empty MP3 response
 
 ## Required before selecting a build
 
 - Configure real production environment values on the server without exposing
   them in the mobile bundle or repository.
-- Fund/authorize Volcengine resources and run the Ark, streaming ASR, and TTS
-  verification scripts.
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
 - Wait for Apple to finish processing build 10, assign it to internal
