@@ -42,23 +42,34 @@ Last updated: 2026-09-22
 - Root and backend environment examples document mobile, Ark, speech, auth,
   backup, safety-limit, and retention configuration
 - TypeScript, lint, mobile policy tests, backend tests, and backend build pass
+- Production landing, health, readiness, privacy, terms, and support routes all
+  return HTTP 200
+- Build 10 completed a signed native Xcode archive successfully
 
 ## Required before selecting a build
 
-- Deploy the current backend and verify:
-  - `https://api.dailyphotospeak.cn/`
-  - `https://api.dailyphotospeak.cn/privacy`
-  - `https://api.dailyphotospeak.cn/terms`
-  - `https://api.dailyphotospeak.cn/support`
 - Configure real production environment values on the server without exposing
   them in the mobile bundle or repository.
 - Fund/authorize Volcengine resources and run the Ark, streaming ASR, and TTS
   verification scripts.
-- Run a real-device end-to-end test: sign-in, photo selection, recording,
-  transcription, AI feedback, TTS playback, follow-up, history, and account
-  deletion.
-- Archive and upload build 10, then test it through TestFlight. Do not select any
-  older App Store build for review.
+- Run the real-device checks in
+  [`release-functional-test-plan.md`](./release-functional-test-plan.md).
+- Sign in to the Apple developer account in Xcode, create/refresh the App Store
+  distribution certificate, export the existing build 10 archive, and upload it
+  to TestFlight. Do not select any older App Store build for review.
+
+## Required operational launch gates
+
+- Enable independent off-host backups. The prepared backup job supports a
+  private OSS bucket with SSE-KMS, but OSS is not enabled on the account yet.
+- Run and record one restore drill from the off-host backup before accepting
+  paid users.
+- Configure alerts for API unavailability, process restarts, disk pressure,
+  backup failure, provider spend, and AI error/rate-limit spikes.
+- Keep the initial rollout controlled. The current 2-vCPU/3.4-GiB server is
+  appropriate for roughly 100–300 DAU and 5–10 simultaneous AI workflows, not
+  an unbounded launch spike; measure real latency and provider concurrency
+  before increasing traffic.
 
 ## App Store Connect items still intentionally pending
 
@@ -70,6 +81,9 @@ Last updated: 2026-09-22
 - Subscription review screenshots remain required before the subscription
   products can be added to the first app-version submission.
 - Submission for review: intentionally not performed.
+- Paid Apps Agreement, banking, and tax status must be verified by the account
+  holder; identity, tax declarations, and bank details are intentionally never
+  inferred or submitted by automation.
 
 ## Product decisions to resolve
 
