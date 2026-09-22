@@ -35,6 +35,7 @@ import {
   termsHtml,
 } from './legal.js';
 import { requireSupportedClient } from './middleware/client-version.js';
+import { safeLogReference } from './logging/safe-reference.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAiRouter } from './routes/ai.js';
 import { createSubscriptionRouter } from './routes/subscriptions.js';
@@ -539,7 +540,7 @@ app.onError((err, c) => {
       event: 'error',
       path: c.req.path,
       method: c.req.method,
-      userId: c.get('userId') || '',
+      userRef: safeLogReference('user', c.get('userId')),
       message: err.message,
       stack: (err.stack || '').slice(0, 2000),
     })

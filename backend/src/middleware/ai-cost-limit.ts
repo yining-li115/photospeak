@@ -2,6 +2,7 @@ import { and, eq, gte, sql } from 'drizzle-orm';
 import type { MiddlewareHandler } from 'hono';
 import { db, schema } from '../db/client.js';
 import type { AuthVars } from '../auth/middleware.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 
 export interface AiCostLimitOptions {
   limitMicros: (plan: string) => number | undefined;
@@ -50,7 +51,7 @@ export function aiCostLimit(
         JSON.stringify({
           ts: new Date().toISOString(),
           event: 'ai.cost.soft_threshold',
-          userId: c.get('userId'),
+          userRef: safeLogReference('user', c.get('userId')),
           plan,
           totalMicros: decision.totalMicros,
           limitMicros: decision.limitMicros,

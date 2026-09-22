@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import WebSocket, { WebSocketServer, type RawData } from 'ws';
 import { recordUsage } from '../ai/usage.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 import type {
   StreamingTranscriptionProvider,
   TranscriptionProviderEvent,
@@ -193,7 +194,10 @@ function runRelay(
         JSON.stringify({
           ts: new Date().toISOString(),
           event: 'transcribe.usage.failed',
-          sessionId: ticket.sessionId,
+          sessionRef: safeLogReference(
+            'transcription-session',
+            ticket.sessionId
+          ),
           message: error instanceof Error ? error.message : String(error),
         })
       );
@@ -248,7 +252,10 @@ function runRelay(
         ts: new Date().toISOString(),
         event: 'transcribe.provider_create_failed',
         provider: config.provider.name,
-        sessionId: ticket.sessionId,
+        sessionRef: safeLogReference(
+          'transcription-session',
+          ticket.sessionId
+        ),
         message: error instanceof Error ? error.message : String(error),
       })
     );

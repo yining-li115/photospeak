@@ -21,6 +21,7 @@ import {
   classifyAppleRevocationFailure,
   shouldTerminalizeAppleRevocation,
 } from '../auth/recovery-policy.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 
 export type AppleDeletionProcessingResult =
   | { status: 'deleted'; outcome: AppleDeletionOutcome }
@@ -226,8 +227,11 @@ async function terminalizeOrRescheduleCredential(input: {
           ts: new Date().toISOString(),
           severity: 'high',
           event: 'auth.apple.revocation_manual_required',
-          userId: marked.userId ?? '',
-          credentialId: input.credential.id,
+          userRef: safeLogReference('user', marked.userId),
+          credentialRef: safeLogReference(
+            'apple-credential',
+            input.credential.id
+          ),
           failureClass,
           attemptCount: input.credential.attemptCount,
           errorName:
@@ -255,7 +259,10 @@ async function terminalizeOrRescheduleCredential(input: {
         ts: new Date().toISOString(),
         severity: 'high',
         event: 'auth.apple.revocation_configuration_blocked',
-        credentialId: input.credential.id,
+        credentialRef: safeLogReference(
+          'apple-credential',
+          input.credential.id
+        ),
         upstreamStatus: appleError?.httpStatus,
         upstreamCode: appleError?.upstreamCode,
       })

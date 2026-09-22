@@ -21,6 +21,7 @@
  */
 import type { Context, MiddlewareHandler } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
+import { safeLogReference } from '../logging/safe-reference.js';
 
 interface Bucket {
   count: number;
@@ -129,7 +130,7 @@ export function rateLimit(opts: RateLimitOptions): MiddlewareHandler {
           ts: new Date().toISOString(),
           event: 'rate_limit.soft_threshold',
           bucket: opts.name,
-          key,
+          keyRef: safeLogReference(`rate-limit:${opts.name}`, key),
           count: result.count,
           hardLimit: result.max,
         })

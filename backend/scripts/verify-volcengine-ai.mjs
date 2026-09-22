@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { Buffer } from 'node:buffer';
 import { deflateSync } from 'node:zlib';
 
 /**

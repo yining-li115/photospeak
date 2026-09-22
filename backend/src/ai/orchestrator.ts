@@ -14,6 +14,7 @@ import {
 } from './idempotency.js';
 import { AiProviderError } from './types.js';
 import { checkAiCostLimit } from '../middleware/ai-cost-limit.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 
 export interface AiOrchestratorConfig {
   gateway: AiGateway;
@@ -179,8 +180,8 @@ function providerErrorPayload(
     JSON.stringify({
       ts: new Date().toISOString(),
       event: 'ai.request.failed',
-      requestId,
-      operationId,
+      requestRef: safeLogReference('ai-request', requestId),
+      operationRef: safeLogReference('ai-operation', operationId),
       code,
       upstreamStatus:
         error instanceof AiProviderError ? error.upstreamStatus : undefined,

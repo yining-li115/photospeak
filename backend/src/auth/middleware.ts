@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/client.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 import { verifyToken } from './jwt.js';
 
 export type AuthVars = {
@@ -18,7 +19,7 @@ function logAuth(c: Context, userId: string): void {
       path: c.req.path,
       method: c.req.method,
       mode: 'jwt',
-      userId,
+      userRef: safeLogReference('user', userId),
       clientVersion: c.req.header('x-client-version') || '',
       clientPlatform: c.req.header('x-client-platform') || '',
     })

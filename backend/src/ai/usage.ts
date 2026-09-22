@@ -1,4 +1,5 @@
 import { db, schema } from '../db/client.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 
 export type AiCapability =
   | 'session_analysis'
@@ -66,8 +67,8 @@ export async function recordUsage(input: UsageEventInput): Promise<void> {
       JSON.stringify({
         ts: new Date().toISOString(),
         event: 'ai.usage.write_failed',
-        requestId: input.requestId,
-        userId: input.userId,
+        requestRef: safeLogReference('ai-request', input.requestId),
+        userRef: safeLogReference('user', input.userId),
         message: error instanceof Error ? error.message : String(error),
       })
     );

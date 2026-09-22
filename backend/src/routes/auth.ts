@@ -42,6 +42,7 @@ import {
   rateLimit,
   rateLimitConsume,
 } from '../middleware/rate-limit.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -673,7 +674,7 @@ export function createAuthRouter(config: Config) {
         JSON.stringify({
           ts: new Date().toISOString(),
           event: 'auth.apple.manual_revocation_required',
-          userId,
+          userRef: safeLogReference('user', userId),
         })
       );
       return c.json({
@@ -758,7 +759,7 @@ function logAppleFailure(event: string, error: unknown, userId?: string): void {
     JSON.stringify({
       ts: new Date().toISOString(),
       event,
-      userId: userId || '',
+      userRef: safeLogReference('user', userId),
       errorKind:
         appleError?.kind ||
         (cause instanceof AppleIdentityMismatchError

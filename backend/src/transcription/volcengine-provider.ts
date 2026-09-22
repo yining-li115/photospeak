@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import WebSocket, { type ClientOptions, type RawData } from 'ws';
+import { safeLogReference } from '../logging/safe-reference.js';
 import type {
   StreamingTranscriptionProvider,
   TranscriptionProviderEvent,
@@ -167,7 +168,10 @@ class VolcengineAsrSession implements TranscriptionProviderSession {
               ts: new Date().toISOString(),
               event: 'transcribe.upstream_rejected',
               provider: 'volcengine-speech',
-              requestId: this.context.requestId,
+              requestRef: safeLogReference(
+                'transcription-request',
+                this.context.requestId
+              ),
               code: frame.code,
               message: frame.message,
             })
@@ -203,7 +207,10 @@ class VolcengineAsrSession implements TranscriptionProviderSession {
             ts: new Date().toISOString(),
             event: 'transcribe.protocol_failed',
             provider: 'volcengine-speech',
-            requestId: this.context.requestId,
+            requestRef: safeLogReference(
+              'transcription-request',
+              this.context.requestId
+            ),
             message: error instanceof Error ? error.message : String(error),
           })
         );
@@ -221,7 +228,10 @@ class VolcengineAsrSession implements TranscriptionProviderSession {
             ts: new Date().toISOString(),
             event: 'transcribe.handshake_rejected',
             provider: 'volcengine-speech',
-            requestId: this.context.requestId,
+            requestRef: safeLogReference(
+              'transcription-request',
+              this.context.requestId
+            ),
             status,
             logId: typeof logId === 'string' ? logId : undefined,
           })

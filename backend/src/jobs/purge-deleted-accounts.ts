@@ -4,6 +4,7 @@ import { createAppleServerTokenServiceFromEnv } from '../auth/apple-server.js';
 import { classifyAppleRevocationFailure } from '../auth/recovery-policy.js';
 import { claimPendingAccountDeletions } from '../auth/session-service.js';
 import { closeDatabase } from '../db/client.js';
+import { safeLogReference } from '../logging/safe-reference.js';
 import {
   purgeDeletedAccounts,
   expireAiOperationResults,
@@ -144,7 +145,7 @@ async function recoverPendingAppleDeletions(): Promise<{
           JSON.stringify({
             ts: new Date().toISOString(),
             event: 'accounts.apple_deletion.pending',
-            userId: claim.userId,
+            userRef: safeLogReference('user', claim.userId),
             status: result.status,
           })
         );
