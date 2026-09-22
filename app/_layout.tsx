@@ -7,6 +7,7 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { AccountRuntimeEffects } from '../src/components/AccountRuntimeEffects';
 import { AuthProvider, useAuth } from '../src/context/auth';
 import { PlayerProvider } from '../src/context/player';
+import { SubscriptionProvider } from '../src/context/subscription';
 import { initializeSentryIfEnabled } from '../src/monitoring/sentry';
 import { readCurrentConsent } from '../src/privacy/consent';
 import { loadDiagnosticsPreference } from '../src/privacy/diagnostics';
@@ -61,14 +62,16 @@ function AccountScopedRuntime({
 }) {
   const { user } = useAuth();
   return (
-    <PlayerProvider
+    <SubscriptionProvider
       key={user?.id ?? 'signed-out'}
-      ownerId={user?.id ?? null}
+      userId={user?.id ?? null}
     >
-      <AccountRuntimeEffects onLegacyDataImported={onLegacyDataImported} />
-      <RootStack key={dataRevision} />
-      <StatusBar style="auto" />
-    </PlayerProvider>
+      <PlayerProvider ownerId={user?.id ?? null}>
+        <AccountRuntimeEffects onLegacyDataImported={onLegacyDataImported} />
+        <RootStack key={dataRevision} />
+        <StatusBar style="auto" />
+      </PlayerProvider>
+    </SubscriptionProvider>
   );
 }
 

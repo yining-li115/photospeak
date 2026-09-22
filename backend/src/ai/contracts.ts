@@ -73,6 +73,7 @@ export type AnalysisResult = z.infer<typeof analysisResultSchema>;
 const sessionAnalysisRequestSchema = z
   .object({
     operation: z.literal('session_analysis'),
+    client_session_id: z.uuid(),
     photo_data_url: photoDataUrlSchema,
     transcript: z.string().trim().min(1).max(12_000),
     mode: z.enum(['polish', 'expand']).default('polish'),
@@ -82,6 +83,7 @@ const sessionAnalysisRequestSchema = z
 const followUpRequestSchema = z
   .object({
     operation: z.literal('follow_up'),
+    client_session_id: z.uuid(),
     photo_data_url: photoDataUrlSchema,
     transcript: z.string().trim().min(1).max(12_000),
     analysis: analysisResultSchema,

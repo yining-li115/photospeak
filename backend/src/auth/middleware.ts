@@ -136,7 +136,8 @@ export function requireUser(options?: {
     c.set('sessionId', activeUser.sessionId);
     c.set('authenticatedAt', activeUser.authenticatedAt);
     const entitlementActive =
-      activeUser.entitlementStatus === 'active' &&
+      (activeUser.entitlementStatus === 'active' ||
+        activeUser.entitlementStatus === 'grace_period') &&
       (!activeUser.currentPeriodEnd ||
         activeUser.currentPeriodEnd.getTime() > Date.now());
     c.set('plan', entitlementActive ? activeUser.plan || 'free' : 'free');

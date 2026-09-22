@@ -1,0 +1,1 @@
+ALTER TABLE "user_entitlements" ADD COLUMN "store_event_signed_at" timestamp with time zone;

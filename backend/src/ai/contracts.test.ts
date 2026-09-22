@@ -11,6 +11,7 @@ const photo = 'data:image/jpeg;base64,aGVsbG8gd29ybGQ=';
 test('analysis API accepts the narrow session-analysis DTO', () => {
   const value = analyzeRequestSchema.parse({
     operation: 'session_analysis',
+    client_session_id: '018f47ac-2f17-7bb5-8f52-92f0b92d7271',
     photo_data_url: photo,
     transcript: 'There is a dog in the park.',
     mode: 'polish',

@@ -73,3 +73,40 @@ test('0006 adds durable AI operations and stable usage operation ids', async () 
     assert.ok(sql.includes(fragment), `missing migration fragment: ${fragment}`);
   }
 });
+
+test('0007 through 0009 add normalized StoreKit ledgers and quota reservations', async () => {
+  const base = await readFile(
+    migrationUrl('0007_chunky_senator_kelly.sql'),
+    'utf8'
+  );
+  for (const fragment of [
+    'CREATE TABLE "app_store_transactions"',
+    'CREATE TABLE "app_store_notifications"',
+    'CREATE TABLE "subscription_usage_reservations"',
+    '"payload_sha256" text NOT NULL',
+    '"subscription_usage_user_month_session_capability_idx"',
+    'ON DELETE cascade',
+  ]) {
+    assert.ok(base.includes(fragment), `missing migration fragment: ${fragment}`);
+  }
+  assert.doesNotMatch(base, /signed_payload|signed_transaction/i);
+
+  const ordering = await readFile(
+    migrationUrl('0008_elite_penance.sql'),
+    'utf8'
+  );
+  assert.match(ordering, /ADD COLUMN "store_event_signed_at"/);
+
+  const lifetimeQuotaIdentity = await readFile(
+    migrationUrl('0009_greedy_impossible_man.sql'),
+    'utf8'
+  );
+  assert.match(
+    lifetimeQuotaIdentity,
+    /subscription_usage_user_session_capability_idx/
+  );
+  assert.doesNotMatch(
+    lifetimeQuotaIdentity,
+    /CREATE UNIQUE INDEX[^;]+period_month/
+  );
+});

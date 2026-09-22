@@ -1,0 +1,2 @@
+DROP INDEX "subscription_usage_user_month_session_capability_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "subscription_usage_user_session_capability_idx" ON "subscription_usage_reservations" USING btree ("user_id","client_session_id","capability");

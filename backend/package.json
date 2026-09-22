@@ -18,6 +18,7 @@
     "@alicloud/dypnsapi20170525": "^2.0.0",
     "@alicloud/openapi-client": "^0.4.15",
     "@alicloud/tea-util": "^1.4.11",
+    "@apple/app-store-server-library": "^3.1.0",
     "@hono/node-server": "^1.19.17",
     "@hono/zod-validator": "^0.8.0",
     "dotenv": "^16.4.0",

@@ -11,6 +11,12 @@ import { AiOrchestrator } from '../ai/orchestrator.js';
 import { requireUser, type AuthVars } from '../auth/middleware.js';
 import { concurrencyLimit } from '../middleware/concurrency-limit.js';
 import { rateLimit } from '../middleware/rate-limit.js';
+import {
+  completeFreeOperation,
+  FreeQuotaError,
+  releaseFreeOperation,
+  reserveFreeOperation,
+} from '../subscriptions/free-quota.js';
 
 export interface AiRouterConfig {
   orchestrator: AiOrchestrator;
@@ -135,17 +141,42 @@ export function createAiRouter(config: AiRouterConfig) {
       const id = requestId();
       c.header('X-Request-ID', id);
       const request = c.req.valid('json');
+      const idempotencyKey = c.req.header('Idempotency-Key') ?? '';
+      let quotaReservation = null;
       try {
+        quotaReservation = await reserveFreeOperation({
+          userId: c.get('userId'),
+          plan: c.get('plan'),
+          clientSessionId: request.client_session_id,
+          capability: request.operation,
+          idempotencyKey,
+        });
         const result = await config.orchestrator.analyze(request, {
           requestId: id,
-          idempotencyKey: c.req.header('Idempotency-Key') ?? '',
+          idempotencyKey,
           userId: c.get('userId'),
           plan: c.get('plan'),
         });
+        await completeFreeOperation(quotaReservation);
         c.header('X-Operation-ID', result.operationId);
         c.header('Idempotency-Replayed', result.replayed ? 'true' : 'false');
         return c.json(result.body, result.status as never);
       } catch (error) {
+        if (error instanceof FreeQuotaError) {
+          return c.json(
+            { error: error.message, code: error.code },
+            402
+          );
+        }
+        if (
+          !(
+            error instanceof AiIdempotencyError &&
+            (error.code === 'AI_OPERATION_IN_PROGRESS' ||
+              error.code === 'AI_OPERATION_UNCERTAIN')
+          )
+        ) {
+          await releaseFreeOperation(quotaReservation).catch(() => {});
+        }
         if (error instanceof AiIdempotencyError) {
           return idempotencyErrorResponse(c, error);
         }

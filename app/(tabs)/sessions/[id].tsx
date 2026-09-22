@@ -62,6 +62,7 @@ import {
   PlaybackRecoveryRequiredError,
   usePlayer,
 } from '../../../src/context/player';
+import { useSubscription } from '../../../src/context/subscription';
 import { savePhoto, type SavedPhoto } from '../../../src/storage/photos';
 import {
   ensureSessionStorageCapacity,
@@ -101,6 +102,7 @@ export default function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const player = usePlayer();
+  const { presentPaywall, refresh: refreshSubscription } = useSubscription();
   const [mode, setMode] = useState<Mode>('loading');
   const [photo, setPhoto] = useState<SavedPhoto | null>(null);
   const [picking, setPicking] = useState(false);
@@ -475,10 +477,22 @@ export default function SessionDetailScreen() {
       });
       assertAccountOperationScope(scope);
       setAnalysis(result);
+      void refreshSubscription().catch(() => {});
     } catch (e) {
       if (!isAccountOperationScopeCurrent(scope)) return;
       if (e instanceof StorageCapacityError) {
         Alert.alert('存储空间不足', e.message);
+        return;
+      }
+      if (
+        e instanceof AiServiceError &&
+        (e.code === 'QUOTA_SESSION_LIMIT' ||
+          e.code === 'QUOTA_FOLLOW_UP_LIMIT')
+      ) {
+        Alert.alert('免费次数已用完', e.message, [
+          { text: '稍后再说', style: 'cancel' },
+          { text: '查看 Plus', onPress: presentPaywall },
+        ]);
         return;
       }
       if (
@@ -562,6 +576,18 @@ export default function SessionDetailScreen() {
       if (e instanceof StorageCapacityError) {
         setChatMessages(historyForApi);
         Alert.alert('存储空间不足', e.message);
+        return;
+      }
+      if (
+        e instanceof AiServiceError &&
+        (e.code === 'QUOTA_SESSION_LIMIT' ||
+          e.code === 'QUOTA_FOLLOW_UP_LIMIT')
+      ) {
+        setChatMessages(historyForApi);
+        Alert.alert('免费追问次数已用完', e.message, [
+          { text: '稍后再说', style: 'cancel' },
+          { text: '查看 Plus', onPress: presentPaywall },
+        ]);
         return;
       }
       if (

@@ -22,6 +22,7 @@ import {
 import { Card } from '../../../src/components/Card';
 import { Screen } from '../../../src/components/Screen';
 import { useAuth } from '../../../src/context/auth';
+import { useSubscription } from '../../../src/context/subscription';
 import { countCardsDueBy, countMasteredCards } from '../../../src/db/cards';
 import {
   getCurrentStreak,
@@ -77,6 +78,7 @@ export default function HomeScreen() {
   const [stats, setStats] = useState<HomeStats>(ZERO_STATS);
   const greeting = currentGreeting();
   const { user, logout, deleteAccount, updateProfile } = useAuth();
+  const { state: subscription, isPlus, presentPaywall } = useSubscription();
   const [editingNickname, setEditingNickname] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState('');
   const [nicknameSaving, setNicknameSaving] = useState(false);
@@ -317,6 +319,39 @@ export default function HomeScreen() {
             </View>
           </Card>
         )}
+
+        <Card style={styles.plusCard}>
+          <View style={styles.plusHeader}>
+            <View>
+              <Text style={styles.plusTitle}>
+                {isPlus ? 'PhotoSpeak Plus' : '升级 Plus'}
+              </Text>
+              <Text style={styles.plusBody}>
+                {isPlus
+                  ? '正常个人学习不限 Session 和追问次数'
+                  : subscription
+                    ? `本月已完成 ${subscription.usage.completedSessions}/${subscription.usage.sessionLimit} 个免费 Session`
+                    : '解锁不限次数的正常个人口语练习'}
+              </Text>
+            </View>
+            <Ionicons
+              name={isPlus ? 'sparkles' : 'sparkles-outline'}
+              size={24}
+              color={colors.accent}
+            />
+          </View>
+          {!isPlus && (
+            <Pressable
+              onPress={presentPaywall}
+              style={({ pressed }) => [
+                styles.plusButton,
+                pressed && { opacity: 0.82 },
+              ]}
+            >
+              <Text style={styles.plusButtonText}>查看 Plus 方案</Text>
+            </Pressable>
+          )}
+        </Card>
 
         <Card style={styles.accountCard}>
           <Text style={styles.sectionLabel}>Account</Text>
@@ -758,6 +793,40 @@ const styles = StyleSheet.create({
   tipBody: {
     ...text.caption,
     lineHeight: 19,
+  },
+  plusCard: {
+    backgroundColor: colors.accentBgSoft,
+    borderColor: colors.accent,
+    borderWidth: 1,
+  },
+  plusHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  plusTitle: {
+    ...text.cardTitle,
+    fontSize: 17,
+    color: colors.accentText,
+  },
+  plusBody: {
+    ...text.caption,
+    marginTop: 5,
+    lineHeight: 19,
+    maxWidth: 275,
+  },
+  plusButton: {
+    marginTop: spacing.md,
+    backgroundColor: colors.textPrimary,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  plusButtonText: {
+    color: colors.card,
+    fontSize: 14,
+    fontWeight: '700',
   },
   accountCard: {
     marginTop: spacing.md,

@@ -17,17 +17,18 @@ they are not a monthly product quota.
 | Plan | Recommended public test | Entitlement |
 | --- | --- | --- |
 | Free | ¥0 | Five completed sessions per calendar month, one follow-up per session |
-| Plus monthly | ¥38 | Unlimited personal sessions and follow-ups; local listening/cards/history |
-| Plus annual | ¥328 | Same entitlement; highlight annual on the paywall |
+| Plus monthly (Mainland China) | ¥18 | Unlimited personal sessions and follow-ups; local listening/cards/history |
+| Plus annual (Mainland China) | ¥148 | Same entitlement; highlight annual on the paywall |
+| Plus monthly (United States baseline) | US$9.99 | Local App Store price points vary by storefront |
+| Plus annual (United States baseline) | US$79.99 | Local App Store price points vary by storefront |
 
 Do not add a free trial while the free tier already demonstrates the complete
-workflow. If acquisition needs a stronger launch hook, test ¥28/month or
-¥228 for the first year as a time-bounded introductory/offer-code price for
-eligible beta users, rather than establishing it as the permanent renewal
-price. Do not sell a lifetime unlock while every practice continues to incur
-AI cost.
+workflow. If acquisition needs a stronger launch hook, test a ¥9.9 first month
+as a time-bounded introductory or offer-code price for eligible users, rather
+than establishing it as the permanent renewal price. Do not sell a lifetime
+unlock while every practice continues to incur AI cost.
 
-The public speech list prices make ¥28/¥228 a fragile permanent price. A rough
+The public speech list prices make low permanent prices operationally fragile. A rough
 70-second session with ASR, analysis and 600–1,200 synthesized characters can
 cost approximately ¥0.45–¥0.75 before hosting, support, failed calls and store
 commission. At ten sessions per month that is already ¥4.5–¥7.5; at thirty it
@@ -96,8 +97,7 @@ retry, grace periods and account transfer rules. Use StoreKit 2 plus App Store
 Server API/Notifications V2 on Apple and an equivalent provider adapter for
 Google Play.
 
-This repository does **not** yet implement StoreKit products, transaction
-verification, App Store Server Notifications, restore purchases, or the
-paywall. The existing `plan`/usage controls are only backend foundations; paid
-launch remains blocked until the complete entitlement lifecycle is tested in
-Apple sandbox and production.
+This repository implements StoreKit products, server-side transaction
+verification, App Store Server Notifications V2, restore purchases and the
+paywall. Paid launch remains blocked until the complete entitlement lifecycle
+is tested in Apple sandbox and production.

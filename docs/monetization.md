@@ -29,10 +29,12 @@
 | 套餐 | 价格 | 说明 |
 |------|------|------|
 | 免费 | ¥0 | 每月 5 次已完成 session，1 次 follow-up/session，本地存储 |
-| Plus 月订阅 | ¥38/月 | 正常个人学习不限 session 和 follow-up；本地历史/音频 |
-| Plus 年订阅 | ¥328/年 | 同上，折合约 ¥27.3/月 |
+| Plus 月订阅（中国大陆） | ¥18/月 | 正常个人学习不限 session 和 follow-up；本地历史/音频 |
+| Plus 年订阅（中国大陆） | ¥148/年 | 同上，折合约 ¥12.3/月 |
+| Plus 月订阅（美国基准） | US$9.99/月 | 其他地区使用当地 App Store 价位 |
+| Plus 年订阅（美国基准） | US$79.99/年 | 其他地区使用当地 App Store 价位 |
 
-¥28/月或首年 ¥228 只作为限时 introductory offer / offer code 测试，
+首月 ¥9.9 只作为后续可选的 introductory offer / offer code 测试，
 不作为永久续订价。当前版本没有云端学习内容同步，因此不能在付费页承诺云端音频。
 
 ### 收支平衡点
@@ -105,7 +107,7 @@
 
 ### M5 · 内测优惠码
 - [ ] App Store Connect → Promo Codes：生成 20 个一次性兑换码 + 25 个 50% off 月订阅码作为备用
-- [ ] **或者**：用 Apple [Offer Codes](https://developer.apple.com/app-store/subscriptions/) 功能创建“首月 ¥28”或“首年 ¥228”的限时促销；通过 URL `https://apps.apple.com/redeem?ctx=offercodes&id=APP_ID&code=CODE` 分发，并清楚显示优惠结束后的 ¥38/月或 ¥328/年续订价
+- [ ] **或者**：用 Apple [Offer Codes](https://developer.apple.com/app-store/subscriptions/) 功能创建“首月 ¥9.9”的限时促销；通过 URL `https://apps.apple.com/redeem?ctx=offercodes&id=APP_ID&code=CODE` 分发，并清楚显示优惠结束后的 ¥18/月或 ¥148/年续订价
 - [ ] 客户端识别从 URL 进入的 promo redemption flow（Apple 自动接管）
 - [ ] DB 不需要单独管 promo code，Apple 那边自动 track
 - **依赖**：M1
@@ -161,7 +163,7 @@
 - **累计**：~130GB/月（持续增长）
 - 存储费：130GB × ¥0.12 = ¥15.6/月
 - 出公网流量（按 50% 用户每月回放一次）：~50GB × ¥0.50 = ¥25/月
-- **上述存储数字只作量级草案**。正式预算必须按真实压缩格式、回放流量、冗余/版本、删除保留策略和 300 名月付用户 × ¥38 标价对应的实际商店净收入重算，不能继续沿用旧 ¥6.9 价格，也不能把持续增长的存储成本写成“可忽略”。
+- **上述存储数字只作量级草案**。正式预算必须按真实压缩格式、回放流量、冗余/版本、删除保留策略和 300 名月付用户 × ¥18 标价对应的实际商店净收入重算，不能继续沿用旧 ¥6.9 价格，也不能把持续增长的存储成本写成“可忽略”。
 
 随着用户量增长会自然增长，但占比始终低（< 5% 收入）。
 

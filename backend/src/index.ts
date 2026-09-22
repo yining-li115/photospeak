@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { resolve } from 'node:path';
 import { AiGateway, type AiPricing } from './ai/gateway.js';
 import {
   AiRequestHasher,
@@ -36,6 +37,7 @@ import {
 import { requireSupportedClient } from './middleware/client-version.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAiRouter } from './routes/ai.js';
+import { createSubscriptionRouter } from './routes/subscriptions.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { attachTranscriptionRelay } from './transcription/relay.js';
 import {
@@ -43,6 +45,7 @@ import {
   type VolcengineAsrProviderConfig,
 } from './transcription/volcengine-provider.js';
 import { drainForShutdown } from './services/graceful-shutdown.js';
+import { AppleStoreService } from './subscriptions/apple-store.js';
 
 type SpeechProviderConfig =
   | {
@@ -80,6 +83,11 @@ interface Env {
   legalAiProviderUrl?: string;
   legalDiagnosticsRegion: string;
   legalDiagnosticsRetentionDays: number;
+  appleStore: {
+    appAppleId: number;
+    rootCertificatePaths: string[];
+    enableOnlineChecks: boolean;
+  };
 }
 
 function readEnv(): Env {
@@ -243,6 +251,21 @@ function readEnv(): Env {
     throw new Error('Invalid AI_ASR_RESOURCE_ID');
   }
   const asrPricePerHour = optionalNonNegative(e.AI_ASR_PRICE_PER_HOUR);
+  const appAppleId = boundedInt(
+    'APPLE_APP_ID',
+    required('APPLE_APP_ID'),
+    1,
+    1,
+    Number.MAX_SAFE_INTEGER
+  );
+  const rootCertificatePaths = required('APPLE_ROOT_CA_PATHS')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => resolve(process.cwd(), value));
+  if (rootCertificatePaths.length === 0) {
+    throw new Error('APPLE_ROOT_CA_PATHS must contain at least one path');
+  }
   return {
     APPLE_BUNDLE_ID: e.APPLE_BUNDLE_ID!,
     PHONE_LOGIN_ENABLED: e.PHONE_LOGIN_ENABLED === 'true',
@@ -349,6 +372,11 @@ function readEnv(): Env {
       required('SENTRY_RETENTION_DAYS'),
       30
     ),
+    appleStore: {
+      appAppleId,
+      rootCertificatePaths,
+      enableOnlineChecks: booleanValue(e.APPLE_IAP_ONLINE_CHECKS, true),
+    },
   };
 }
 
@@ -385,6 +413,10 @@ const aiOrchestrator = new AiOrchestrator({
   operations: aiOperations,
   freeDailyCostLimitMicros: env.AI_FREE_DAILY_COST_LIMIT_MICROS,
   plusDailyCostLimitMicros: env.AI_PLUS_DAILY_COST_LIMIT_MICROS,
+});
+const appleStore = new AppleStoreService({
+  bundleId: env.APPLE_BUNDLE_ID,
+  ...env.appleStore,
 });
 const app = new Hono<{ Variables: AuthVars }>();
 
@@ -454,6 +486,8 @@ const supportedClient = requireSupportedClient({
 });
 app.use('/auth/*', supportedClient);
 app.use('/api/*', supportedClient);
+app.use('/subscriptions/me', supportedClient);
+app.use('/subscriptions/apple/transactions', supportedClient);
 
 // /auth/* — public (login flows don't need auth themselves; logout/me
 // have their own requireUser middleware).
@@ -485,6 +519,11 @@ app.route(
     plusDailySafetyLimit: env.AI_PLUS_DAILY_SAFETY_LIMIT,
   })
 );
+
+// StoreKit transaction verification is authenticated; Apple's notification
+// endpoint is authenticated by its signed payload and remains reachable
+// without mobile-version headers.
+app.route('/subscriptions', createSubscriptionRouter(appleStore));
 
 // Catch unhandled errors thrown from route handlers.
 // HTTPException (e.g. zValidator failures) keeps its original 4xx

@@ -147,6 +147,11 @@ export const userEntitlements = pgTable(
     plan: text('plan').notNull().default('free'),
     status: text('status').notNull().default('active'),
     source: text('source').notNull().default('system'),
+    storeProductId: text('store_product_id'),
+    originalTransactionId: text('original_transaction_id'),
+    storeEventSignedAt: timestamp('store_event_signed_at', {
+      withTimezone: true,
+    }),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -156,6 +161,112 @@ export const userEntitlements = pgTable(
     planStatusIdx: index('user_entitlements_plan_status_idx').on(
       t.plan,
       t.status
+    ),
+  })
+);
+
+/**
+ * Verified Apple transactions. The signed JWS is deliberately not retained:
+ * the normalized, signature-verified facts are enough for entitlement and
+ * audit decisions, while a SHA-256 digest provides correlation without
+ * turning the database into a receipt archive.
+ */
+export const appStoreTransactions = pgTable(
+  'app_store_transactions',
+  {
+    transactionId: text('transaction_id').primaryKey(),
+    originalTransactionId: text('original_transaction_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    productId: text('product_id').notNull(),
+    environment: text('environment').notNull(),
+    ownershipType: text('ownership_type'),
+    purchaseAt: timestamp('purchase_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    signedAt: timestamp('signed_at', { withTimezone: true }).notNull(),
+    payloadSha256: text('payload_sha256').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    originalIdx: index('app_store_transactions_original_idx').on(
+      t.originalTransactionId
+    ),
+    userExpiryIdx: index('app_store_transactions_user_expiry_idx').on(
+      t.userId,
+      t.expiresAt
+    ),
+  })
+);
+
+/** Idempotency ledger for App Store Server Notifications V2. */
+export const appStoreNotifications = pgTable(
+  'app_store_notifications',
+  {
+    notificationUuid: text('notification_uuid').primaryKey(),
+    notificationType: text('notification_type').notNull(),
+    subtype: text('subtype'),
+    environment: text('environment').notNull(),
+    originalTransactionId: text('original_transaction_id'),
+    payloadSha256: text('payload_sha256').notNull(),
+    signedAt: timestamp('signed_at', { withTimezone: true }).notNull(),
+    processedAt: timestamp('processed_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    originalIdx: index('app_store_notifications_original_idx').on(
+      t.originalTransactionId
+    ),
+  })
+);
+
+/**
+ * Product quota reservations for the free plan. Rows are scoped to a UTC
+ * calendar month. A failed provider call releases its reservation; completed
+ * rows make retries deterministic and prevent parallel requests bypassing the
+ * five-session / one-follow-up policy.
+ */
+export const subscriptionUsageReservations = pgTable(
+  'subscription_usage_reservations',
+  {
+    id: text('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    periodMonth: text('period_month').notNull(),
+    clientSessionId: text('client_session_id').notNull(),
+    capability: text('capability').notNull(),
+    operationKeyHash: text('operation_key_hash').notNull(),
+    state: text('state').notNull().default('reserved'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => ({
+    // A local session can consume each product capability only once across its
+    // lifetime. period_month remains the billing/counting bucket, not part of
+    // identity, so a month boundary cannot reset the one-follow-up promise.
+    sessionCapabilityIdx: uniqueIndex(
+      'subscription_usage_user_session_capability_idx'
+    ).on(t.userId, t.clientSessionId, t.capability),
+    userPeriodIdx: index('subscription_usage_user_period_idx').on(
+      t.userId,
+      t.periodMonth,
+      t.capability,
+      t.state
     ),
   })
 );

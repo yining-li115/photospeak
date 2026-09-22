@@ -107,6 +107,7 @@ export async function analyzeSession(input: AnalyzeInput): Promise<AnalysisResul
 
   const body = {
     operation: 'session_analysis' as const,
+    client_session_id: input.sessionId,
     photo_data_url: photoDataUrl,
     transcript,
     mode: input.mode ?? 'polish',
@@ -182,6 +183,7 @@ export async function followUpChat(input: FollowUpInput): Promise<FollowUpResult
 
   const body = {
     operation: 'follow_up' as const,
+    client_session_id: input.sessionId,
     photo_data_url: photoDataUrl,
     transcript,
     analysis: input.analysis,
