@@ -5,6 +5,7 @@
  * Router (instead of React Navigation).
  */
 import * as AppleAuthentication from 'expo-apple-authentication';
+import * as WebBrowser from 'expo-web-browser';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -25,6 +26,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { backendPublicDocumentUrl } from '../../src/api/backend';
 import { useAuth } from '../../src/context/auth';
 import {
+  clearConsentReceipt,
   readCurrentConsent,
   recordCurrentConsent,
 } from '../../src/privacy/consent';
@@ -62,10 +64,30 @@ export default function WelcomeScreen() {
     }
   }
 
-  function openConsentDialog() {
+  function closeConsentDialog() {
+    setShowPrivacy(false);
     setPendingAction(null);
-    setModalAccepted(hasConsent);
-    setShowPrivacy(true);
+    setModalAccepted(false);
+  }
+
+  async function toggleConsent() {
+    if (consentSaving) return;
+    setConsentSaving(true);
+    try {
+      if (hasConsent) {
+        await clearConsentReceipt();
+        setHasConsent(false);
+        setModalAccepted(false);
+      } else {
+        await recordCurrentConsent();
+        setHasConsent(true);
+        setModalAccepted(true);
+      }
+    } catch {
+      Alert.alert('无法保存隐私选择', '请检查设备存储后重试');
+    } finally {
+      setConsentSaving(false);
+    }
   }
 
   async function onAgree() {
@@ -130,7 +152,7 @@ export default function WelcomeScreen() {
       Alert.alert('暂时无法打开', '后端地址未配置，请联系支持人员');
       return;
     }
-    void Linking.openURL(url).catch(() => {
+    void WebBrowser.openBrowserAsync(url).catch(() => {
       Alert.alert('暂时无法打开', '请检查网络后重试');
     });
   }
@@ -183,7 +205,8 @@ export default function WelcomeScreen() {
             accessibilityRole="checkbox"
             accessibilityState={{ checked: hasConsent }}
             accessibilityLabel="同意用户协议与隐私政策"
-            onPress={openConsentDialog}
+            onPress={() => void toggleConsent()}
+            disabled={consentSaving}
             hitSlop={8}
           >
             <Ionicons
@@ -206,7 +229,12 @@ export default function WelcomeScreen() {
       </View>
 
       {/* Privacy modal */}
-      <Modal visible={showPrivacy} animationType="slide" transparent>
+      <Modal
+        visible={showPrivacy}
+        animationType="slide"
+        transparent
+        onRequestClose={closeConsentDialog}
+      >
         <View style={m.overlay}>
           <View style={m.sheet}>
             <Text style={m.title}>用户协议与隐私政策</Text>
@@ -281,11 +309,7 @@ export default function WelcomeScreen() {
             </Pressable>
             <Pressable
               style={m.cancelBtn}
-              onPress={() => {
-                setShowPrivacy(false);
-                setPendingAction(null);
-                setModalAccepted(false);
-              }}
+              onPress={closeConsentDialog}
             >
               <Text style={m.cancelBtnText}>暂不同意</Text>
             </Pressable>
