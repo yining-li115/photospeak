@@ -45,6 +45,9 @@ Last updated: 2026-09-22
 - Production landing, health, readiness, privacy, terms, and support routes all
   return HTTP 200
 - Build 10 completed a signed native Xcode archive successfully
+- An Apple Distribution certificate was created for the Yiru Li team
+- Xcode Organizer uploaded build 10 to App Store Connect successfully on
+  2026-09-22; Apple-side processing may take additional time
 
 ## Required before selecting a build
 
@@ -54,9 +57,9 @@ Last updated: 2026-09-22
   verification scripts.
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Sign in to the Apple developer account in Xcode, create/refresh the App Store
-  distribution certificate, export the existing build 10 archive, and upload it
-  to TestFlight. Do not select any older App Store build for review.
+- Wait for Apple to finish processing build 10, assign it to internal
+  TestFlight testing, and complete the real-device plan. Do not select any older
+  App Store build for review.
 
 ## Required operational launch gates
 
@@ -97,3 +100,12 @@ Last updated: 2026-09-22
 - “Unlimited” Plus should be marketed as no visible session/follow-up quota,
   while retaining abuse, concurrency, and daily cost safety limits in the
   backend.
+
+## Non-blocking build warning
+
+The build 10 upload completed with missing-dSYM warnings for the precompiled
+`React.framework`, `ReactNativeDependencies.framework`, and `hermes.framework`.
+This does not block TestFlight or App Store processing, but crashes inside those
+frameworks may be less completely symbolicated. Recheck the Expo/React Native
+release artifacts when upgrading the native dependency set; do not make a
+last-minute framework replacement solely to silence this warning.
