@@ -73,6 +73,11 @@ Last updated: 2026-09-22
 
 ## Required operational launch gates
 
+- Choose and enable a production content-safety path. The current gateway
+  validates request and response shapes but reports `moderation:
+  not_configured`; Volcengine's AIGC content-safety service and large-model
+  application firewall are separate commercial products. Do not describe
+  content as safety-approved until one of them is provisioned and integrated.
 - Enable independent off-host backups. The prepared backup job supports a
   private OSS bucket with SSE-KMS, but OSS is not enabled on the account yet.
 - Run and record one restore drill from the off-host backup before accepting
