@@ -49,6 +49,8 @@ Last updated: 2026-09-22
 - Xcode Organizer uploaded build 10 to App Store Connect successfully on
   2026-09-22; Apple processing completed and the build is available in
   TestFlight
+- Build 10 is assigned to the internal testing group; the account-owner tester
+  installed `1.0.0 (10)` on 2026-09-22
 - Paid Apps Agreement is active, the configured bank account is available, and
   the existing US tax forms are active
 - Production Volcengine connectivity verified on 2026-09-22 without exposing
@@ -59,13 +61,11 @@ Last updated: 2026-09-22
 
 ## Required before selecting a build
 
-- Configure real production environment values on the server without exposing
-  them in the mobile bundle or repository.
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Publish the build 10 TestFlight testing notes, assign it to the internal
-  testing group, and complete the real-device plan. Do not select any older App
-  Store build for review.
+- Complete the real-device plan against internal TestFlight build 10. The
+  optional TestFlight testing notes are still blank. Do not select any older
+  App Store build for review.
 
 ## Required operational launch gates
 
