@@ -58,10 +58,23 @@ Last updated: 2026-09-22
   - Ark accepted a bounded multimodal image-and-text request
   - Seed ASR accepted the streaming WebSocket handshake
   - Seed TTS returned a valid non-empty MP3 response
+- Repository commit `f16c594` was deployed to production on 2026-09-22. The
+  post-deploy smoke test passed for health, readiness, public legal/support
+  pages, and the unauthenticated transcription guard; the public health route
+  stayed healthy after the PM2 rolling restart.
+- The production dependency audit reports zero known vulnerabilities. The four
+  moderate audit findings shown by a full install are confined to development
+  tooling and are not present in the production dependency graph.
+- The post-deploy bounded Volcengine verification passed again for Ark
+  multimodal chat, Seed TTS, and the Seed ASR WebSocket handshake.
 - A validated same-host PostgreSQL backup was created on the production server,
   and `/etc/cron.d/photospeak-backup` now runs a daily local backup at 04:17
   server time with seven-day retention. Its log is rotated weekly. This is an
   interim recovery path only and does not satisfy the off-host launch gate.
+- At the final pre-release check the server root volume was 17% used; PM2 logs
+  occupied about 164 KiB and the local backup directory about 72 KiB. Capacity
+  was not a current storage blocker, but alerts and off-host backups remain
+  required before accepting paid users.
 
 ## Required before selecting a build
 
