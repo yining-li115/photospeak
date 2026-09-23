@@ -1,6 +1,6 @@
 # PhotoSpeak release functional test plan
 
-Last updated: 2026-09-22
+Last updated: 2026-09-23
 
 This is the owner-facing release checklist. Automated checks cover code and
 server behavior; the items below require a real iPhone, a human voice, Apple
@@ -14,7 +14,7 @@ a release blocker.
 
 ## 1. Installation and consent
 
-- Fresh-install build 11 on an iPhone, launch it, and confirm the welcome screen
+- Fresh-install build 12 on an iPhone, launch it, and confirm the welcome screen
   is usable on both light and dark system appearance.
 - Try signing in without checking the agreement box. Sign-in must stay blocked
   and explain why.
@@ -107,7 +107,7 @@ a release blocker.
   Expo development build.
 - Capture App Store screenshots only after UI and copy are frozen.
 - Add the reviewer contact/login path and subscription review screenshots.
-- Select build 11 or a later fully tested build, then perform one final metadata,
+- Select build 12 or a later fully tested build, then perform one final metadata,
   privacy-label, price, entitlement, and legal-link review before submission.
 - Submission remains a deliberate owner action; this plan does not authorize
   submitting the app for review.

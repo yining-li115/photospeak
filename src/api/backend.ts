@@ -2,7 +2,7 @@
  * Shared HTTP client for talking to our backend (the Node/Hono proxy
  * + auth service on Aliyun). Owns:
  *
- *   1. Reading `EXPO_PUBLIC_API_BASE` from build-time env.
+ *   1. Resolving the fixed production API origin.
  *   2. SecureStore for access_token + refresh_token.
  *   3. Auto-refreshing on 401 and retrying the original request once.
  *   4. Standard JSON request/response framing.
@@ -17,7 +17,11 @@ import { randomUUID } from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const BASE = (process.env.EXPO_PUBLIC_API_BASE ?? '').replace(/\/$/, '');
+import { resolveBackendBaseUrl } from './backend-origin';
+
+const BASE = resolveBackendBaseUrl({
+  isDev: __DEV__,
+});
 const DEFAULT_TIMEOUT_MS = 20_000;
 const AUTH_EXPIRED_CODE = 'AUTH_ACCESS_EXPIRED';
 

@@ -1,6 +1,6 @@
 # PhotoSpeak App Store launch checklist
 
-Last updated: 2026-09-22
+Last updated: 2026-09-23
 
 ## Completed in App Store Connect
 
@@ -34,7 +34,7 @@ Last updated: 2026-09-22
 
 ## Completed in the repository
 
-- Next iOS build number: 11
+- Current iOS build number: 12
 - Export-compliance declaration: `ITSAppUsesNonExemptEncryption = false`
 - Explicit privacy-policy/user-agreement consent gate before sign-in
 - Optional diagnostics are off by default
@@ -44,10 +44,12 @@ Last updated: 2026-09-22
 - TypeScript, lint, mobile policy tests, backend tests, and backend build pass
 - Production landing, health, readiness, privacy, terms, and support routes all
   return HTTP 200
-- Build 11 completed a signed native Xcode archive successfully
+- Build 12 completed a signed native Xcode archive successfully. Its release
+  bundle was checked to contain only `https://api.dailyphotospeak.cn` and no
+  legacy HTTP server address.
 - An Apple Distribution certificate was created for the Yiru Li team
-- Xcode Organizer uploaded build 11 to App Store Connect successfully on
-  2026-09-22; Apple processing was still pending at the final check
+- Xcode Organizer uploaded build 12 to App Store Connect successfully on
+  2026-09-23; Apple processing was still pending at the final check
 - Build 10 is assigned to the internal testing group; the account-owner tester
   installed `1.0.0 (10)` on 2026-09-22
 - Paid Apps Agreement is active, the configured bank account is available, and
@@ -88,7 +90,7 @@ Last updated: 2026-09-22
 
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Complete the real-device plan against TestFlight build 11 after Apple finishes
+- Complete the real-device plan against TestFlight build 12 after Apple finishes
   processing and the build is assigned to the internal group. The
   optional TestFlight testing notes are still blank. Do not select any older
   App Store build for review.
@@ -141,7 +143,7 @@ Last updated: 2026-09-22
 
 ## Non-blocking build warning
 
-The build 11 upload completed with missing-dSYM warnings for the precompiled
+The build 12 upload completed with missing-dSYM warnings for the precompiled
 `React.framework`, `ReactNativeDependencies.framework`, and `hermes.framework`.
 This does not block TestFlight or App Store processing, but crashes inside those
 frameworks may be less completely symbolicated. Recheck the Expo/React Native
