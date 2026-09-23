@@ -49,9 +49,11 @@ Last updated: 2026-09-23
   legacy HTTP server address.
 - An Apple Distribution certificate was created for the Yiru Li team
 - Xcode Organizer uploaded build 12 to App Store Connect successfully on
-  2026-09-23; Apple processing was still pending at the final check
-- Build 10 is assigned to the internal testing group; the account-owner tester
-  installed `1.0.0 (10)` on 2026-09-22
+  2026-09-23. Apple processing completed and the build was automatically
+  assigned to the internal testing group.
+- Build 12 is assigned to the internal testing group and was also installed
+  directly on the connected iPhone 17 Pro. The installed version was verified
+  as `1.0.0 (12)` on 2026-09-23.
 - Paid Apps Agreement is active, the configured bank account is available, and
   the existing US tax forms are active
 - The account holder confirmed completion of the China mainland compliance
