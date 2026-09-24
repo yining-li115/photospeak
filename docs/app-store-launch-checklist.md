@@ -50,9 +50,9 @@ Last updated: 2026-09-23
 - An Apple Distribution certificate was created for the Yiru Li team
 - Xcode Organizer uploaded build 13 to App Store Connect successfully on
   2026-09-24. Apple processing completed and the build was automatically
-  assigned to the internal testing group. Build 13 is ready for internal
-  testing; external-group submission is tracked separately because it requires
-  Beta App Review.
+  assigned to the internal testing group. Build 13 was then submitted to the
+  external `朋友测试组`; Apple accepted it immediately and its status is
+  `正在测试`. Automatic tester notification is enabled.
 - Build 13 was installed directly on the connected iPhone 17 Pro. The consent
   UI and authentication now share one policy receipt, preventing an accepted
   checkbox from diverging from the receipt used for login. The installed
