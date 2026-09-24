@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -13,8 +15,10 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   BackendError,
   backendPublicDocumentUrl,
@@ -75,6 +79,9 @@ const ZERO_STATS: HomeStats = {
 };
 
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const settingsPanelWidth = Math.min(windowWidth * 0.78, 360);
   const [stats, setStats] = useState<HomeStats>(ZERO_STATS);
   const greeting = currentGreeting();
   const { user, logout, deleteAccount, updateProfile } = useAuth();
@@ -86,6 +93,32 @@ export default function HomeScreen() {
     isDiagnosticsEnabled()
   );
   const [diagnosticsSaving, setDiagnosticsSaving] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const settingsTranslateX = useRef(new Animated.Value(360)).current;
+
+  const openSettings = () => {
+    settingsTranslateX.setValue(settingsPanelWidth);
+    setSettingsVisible(true);
+    requestAnimationFrame(() => {
+      Animated.timing(settingsTranslateX, {
+        toValue: 0,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  const closeSettings = () => {
+    Animated.timing(settingsTranslateX, {
+      toValue: settingsPanelWidth,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setSettingsVisible(false);
+    });
+  };
 
   const openNicknameEditor = () => {
     setNicknameDraft(user?.nickname ?? '');
@@ -230,29 +263,43 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.appLogo}>
-          Photo<Text style={styles.appLogoBold}> Speak</Text>
-        </Text>
-
-        <View style={styles.greetingRow}>
-          <Text style={styles.greeting}>{greeting}</Text>
-          {user && (
-            <Pressable
-              onPress={openNicknameEditor}
-              style={({ pressed }) => [
-                styles.namePress,
-                pressed && { opacity: 0.6 },
-              ]}
-              hitSlop={{ top: 6, bottom: 6, left: 4, right: 8 }}
-            >
-              <Text style={styles.greetingName}>{user.nickname}</Text>
-              <Ionicons
-                name="pencil-outline"
-                size={14}
-                color={colors.accent}
-              />
-            </Pressable>
-          )}
+        <View style={styles.homeHeader}>
+          <View style={styles.greetingRow}>
+            <Text style={styles.greeting}>{greeting}</Text>
+            {user && (
+              <Pressable
+                onPress={openNicknameEditor}
+                style={({ pressed }) => [
+                  styles.namePress,
+                  pressed && { opacity: 0.6 },
+                ]}
+                hitSlop={{ top: 6, bottom: 6, left: 4, right: 8 }}
+              >
+                <Text style={styles.greetingName}>{user.nickname}</Text>
+                <Ionicons
+                  name="pencil-outline"
+                  size={14}
+                  color={colors.accent}
+                />
+              </Pressable>
+            )}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="设置"
+            onPress={openSettings}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.settingsButton,
+              pressed && { opacity: 0.62 },
+            ]}
+          >
+            <Ionicons
+              name="settings-outline"
+              size={24}
+              color={colors.textPrimary}
+            />
+          </Pressable>
         </View>
 
         <Card style={styles.streakCard}>
@@ -334,117 +381,122 @@ export default function HomeScreen() {
           )}
         </Card>
 
-        <Card style={styles.accountCard}>
-          <Text style={styles.sectionLabel}>Account</Text>
-          <View style={styles.accountRow}>
-            <Ionicons
-              name="analytics-outline"
-              size={18}
-              color={colors.textPrimary}
-            />
-            <View style={styles.accountRowCopy}>
-              <Text style={styles.accountRowText}>发送诊断数据</Text>
-              <Text style={styles.accountRowHint}>崩溃、错误与少量性能数据</Text>
-            </View>
-            <Switch
-              value={diagnosticsEnabled}
-              disabled={diagnosticsSaving}
-              onValueChange={(enabled) => {
-                setDiagnosticsSaving(true);
-                void setDiagnosticsEnabled(enabled)
-                  .then(async () => {
-                    setDiagnosticsState(enabled);
-                    if (enabled) initializeSentryIfEnabled();
-                    else await shutdownSentry();
-                  })
-                  .catch(() => {
-                    Alert.alert('保存失败', '无法更新诊断数据设置，请稍后重试');
-                  })
-                  .finally(() => setDiagnosticsSaving(false));
-              }}
-              trackColor={{ true: colors.accent, false: colors.separator }}
-            />
-          </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.accountRow,
-              pressed && { opacity: 0.6 },
-            ]}
-            onPress={() => openLegalDocument('privacy')}
-          >
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={18}
-              color={colors.textPrimary}
-            />
-            <Text style={styles.accountRowText}>隐私政策</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.accountRow,
-              pressed && { opacity: 0.6 },
-            ]}
-            onPress={() => openLegalDocument('terms')}
-          >
-            <Ionicons
-              name="document-text-outline"
-              size={18}
-              color={colors.textPrimary}
-            />
-            <Text style={styles.accountRowText}>用户协议</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.accountRow,
-              pressed && { opacity: 0.6 },
-            ]}
-            onPress={() => openLegalDocument('support')}
-          >
-            <Ionicons
-              name="help-circle-outline"
-              size={18}
-              color={colors.textPrimary}
-            />
-            <Text style={styles.accountRowText}>帮助与支持</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.accountRow,
-              pressed && { opacity: 0.6 },
-            ]}
-            onPress={handleLogout}
-          >
-            <Ionicons
-              name="log-out-outline"
-              size={18}
-              color={colors.textPrimary}
-            />
-            <Text style={styles.accountRowText}>退出登录</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.accountRow,
-              styles.accountRowLast,
-              pressed && { opacity: 0.6 },
-            ]}
-            onPress={handleDeleteAccount}
-          >
-            <Ionicons
-              name="trash-outline"
-              size={18}
-              color={colors.rating.againText}
-            />
-            <Text
-              style={[
-                styles.accountRowText,
-                { color: colors.rating.againText },
-              ]}
-            >
-              注销账号
-            </Text>
-          </Pressable>
-        </Card>
       </ScrollView>
+
+      <Modal
+        visible={settingsVisible}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={closeSettings}
+      >
+        <View style={styles.settingsOverlay}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="关闭设置"
+            style={StyleSheet.absoluteFill}
+            onPress={closeSettings}
+          />
+          <Animated.View
+            style={[
+              styles.settingsPanel,
+              {
+                width: settingsPanelWidth,
+                paddingTop: insets.top,
+                paddingBottom: insets.bottom,
+                transform: [{ translateX: settingsTranslateX }],
+              },
+            ]}
+          >
+            <View style={styles.settingsHeader}>
+              <Text style={styles.settingsTitle}>设置</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="关闭设置"
+                onPress={closeSettings}
+                hitSlop={8}
+                style={({ pressed }) => [
+                  styles.settingsCloseButton,
+                  pressed && { opacity: 0.62 },
+                ]}
+              >
+                <Ionicons
+                  name="close"
+                  size={24}
+                  color={colors.textPrimary}
+                />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.settingsContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.accountRow}>
+                <Ionicons
+                  name="analytics-outline"
+                  size={19}
+                  color={colors.textPrimary}
+                />
+                <View style={styles.accountRowCopy}>
+                  <Text style={styles.accountRowText}>发送诊断数据</Text>
+                  <Text style={styles.accountRowHint}>
+                    崩溃、错误与少量性能数据
+                  </Text>
+                </View>
+                <Switch
+                  value={diagnosticsEnabled}
+                  disabled={diagnosticsSaving}
+                  onValueChange={(enabled) => {
+                    setDiagnosticsSaving(true);
+                    void setDiagnosticsEnabled(enabled)
+                      .then(async () => {
+                        setDiagnosticsState(enabled);
+                        if (enabled) initializeSentryIfEnabled();
+                        else await shutdownSentry();
+                      })
+                      .catch(() => {
+                        Alert.alert(
+                          '保存失败',
+                          '无法更新诊断数据设置，请稍后重试'
+                        );
+                      })
+                      .finally(() => setDiagnosticsSaving(false));
+                  }}
+                  trackColor={{ true: colors.accent, false: colors.separator }}
+                />
+              </View>
+              <SettingsRow
+                icon="shield-checkmark-outline"
+                label="隐私政策"
+                onPress={() => openLegalDocument('privacy')}
+              />
+              <SettingsRow
+                icon="document-text-outline"
+                label="用户协议"
+                onPress={() => openLegalDocument('terms')}
+              />
+              <SettingsRow
+                icon="help-circle-outline"
+                label="帮助与支持"
+                onPress={() => openLegalDocument('support')}
+              />
+              <SettingsRow
+                icon="log-out-outline"
+                label="退出登录"
+                onPress={handleLogout}
+              />
+              <SettingsRow
+                icon="trash-outline"
+                label="注销账号"
+                destructive
+                last
+                onPress={handleDeleteAccount}
+              />
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
 
       <Modal
         visible={editingNickname}
@@ -628,6 +680,53 @@ function StatRow({
   );
 }
 
+type SettingsIconName =
+  | 'shield-checkmark-outline'
+  | 'document-text-outline'
+  | 'help-circle-outline'
+  | 'log-out-outline'
+  | 'trash-outline';
+
+function SettingsRow({
+  icon,
+  label,
+  onPress,
+  destructive = false,
+  last = false,
+}: {
+  icon: SettingsIconName;
+  label: string;
+  onPress: () => void;
+  destructive?: boolean;
+  last?: boolean;
+}) {
+  const color = destructive ? colors.rating.againText : colors.textPrimary;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.accountRow,
+        last && styles.accountRowLast,
+        pressed && { opacity: 0.6 },
+      ]}
+    >
+      <Ionicons name={icon} size={19} color={color} />
+      <Text style={[styles.accountRowText, destructive && { color }]}>
+        {label}
+      </Text>
+      <Ionicons
+        name="chevron-forward"
+        size={17}
+        color={colors.textTertiary}
+        style={styles.settingsChevron}
+      />
+    </Pressable>
+  );
+}
+
 function currentGreeting(): string {
   const h = new Date().getHours();
   if (h < 5) return 'Good night';
@@ -643,20 +742,19 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     gap: spacing.md,
   },
-  appLogo: {
-    ...text.hero,
-    fontSize: 24,
-    color: colors.textPrimary,
+  homeHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
     marginBottom: spacing.sm,
   },
-  appLogoBold: {
-    fontWeight: '700',
-  },
   greetingRow: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    marginBottom: spacing.sm,
+    paddingTop: 4,
   },
   greeting: {
     ...text.greeting,
@@ -670,6 +768,15 @@ const styles = StyleSheet.create({
   greetingName: {
     ...text.greeting,
     color: colors.accent,
+  },
+  settingsButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    ...shadow,
   },
   sectionLabel: {
     ...text.micro,
@@ -788,9 +895,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  accountCard: {
-    marginTop: spacing.md,
-    padding: spacing.lg,
+  settingsOverlay: {
+    flex: 1,
+    alignItems: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.34)',
+  },
+  settingsPanel: {
+    height: '100%',
+    backgroundColor: colors.card,
+    ...shadow,
+  },
+  settingsHeader: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+  },
+  settingsTitle: {
+    ...text.screenTitle,
+  },
+  settingsCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.pillBg,
+  },
+  settingsContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
   accountRow: {
     flexDirection: 'row',
@@ -814,6 +951,9 @@ const styles = StyleSheet.create({
     ...text.caption,
     color: colors.textTertiary,
     marginTop: 2,
+  },
+  settingsChevron: {
+    marginLeft: 'auto',
   },
 
   // ── Nickname edit modal ────────────────────────────────────────
