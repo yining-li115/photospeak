@@ -6,11 +6,18 @@ import {
   isCurrentConsentReceipt,
   requireCurrentConsentReceipt,
 } from '../src/privacy/consent-policy.ts';
+import {
+  CURRENT_CONSENT_VERSION as BACKEND_CONSENT_VERSION,
+} from '../backend/src/privacy/consent-policy.ts';
 
 const currentReceipt = {
   version: CURRENT_POLICY_VERSION,
   acceptedAt: '2026-09-24T00:00:00.000Z',
 };
+
+test('mobile and backend ship the same consent contract version', () => {
+  assert.equal(CURRENT_POLICY_VERSION, BACKEND_CONSENT_VERSION);
+});
 
 test('accepts only a well-formed receipt for the current policy', () => {
   assert.equal(isCurrentConsentReceipt(currentReceipt), true);

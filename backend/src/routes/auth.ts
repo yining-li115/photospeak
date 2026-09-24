@@ -48,6 +48,11 @@ import {
   rateLimitConsume,
 } from '../middleware/rate-limit.js';
 import { safeLogReference } from '../logging/safe-reference.js';
+import {
+  parseConsentReceipt,
+  type ConsentFields,
+  type ValidConsentReceipt,
+} from '../privacy/consent-policy.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -70,18 +75,6 @@ interface Config {
 
 const PHONE_RE = /^1[3-9]\d{9}$/;
 const CODE_RE = /^\d{6}$/;
-const CURRENT_CONSENT_VERSION = '2026-09-19.3';
-
-interface ConsentFields {
-  consent_version?: unknown;
-  consent_accepted_at?: unknown;
-}
-
-interface ValidConsentReceipt {
-  version: string;
-  acceptedAt: Date;
-}
-
 export function createAuthRouter(config: Config) {
   const app = new Hono<{ Variables: AuthVars }>();
   const appleServer =
@@ -761,20 +754,6 @@ async function recordConsentReceipt(
         schema.consentReceipts.consentVersion,
       ],
     });
-}
-
-function parseConsentReceipt(
-  fields: ConsentFields
-): ValidConsentReceipt | null {
-  if (fields.consent_version !== CURRENT_CONSENT_VERSION) return null;
-  if (typeof fields.consent_accepted_at !== 'string') return null;
-  const candidate = new Date(fields.consent_accepted_at);
-  if (Number.isNaN(candidate.getTime())) return null;
-  const now = new Date();
-  return {
-    version: CURRENT_CONSENT_VERSION,
-    acceptedAt: candidate <= now ? candidate : now,
-  };
 }
 
 function logAppleFailure(event: string, error: unknown, userId?: string): void {
