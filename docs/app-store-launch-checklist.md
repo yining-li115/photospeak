@@ -48,9 +48,11 @@ Last updated: 2026-09-23
   bundle was checked to contain only `https://api.dailyphotospeak.cn` and no
   legacy HTTP server address.
 - An Apple Distribution certificate was created for the Yiru Li team
-- Xcode Organizer uploaded build 12 to App Store Connect successfully on
-  2026-09-23. Apple processing completed and the build was automatically
-  assigned to the internal testing group.
+- Xcode Organizer uploaded build 13 to App Store Connect successfully on
+  2026-09-24. Apple processing completed and the build was automatically
+  assigned to the internal testing group. Build 13 is ready for internal
+  testing; external-group submission is tracked separately because it requires
+  Beta App Review.
 - Build 13 was installed directly on the connected iPhone 17 Pro. The consent
   UI and authentication now share one policy receipt, preventing an accepted
   checkbox from diverging from the receipt used for login. The installed
@@ -97,10 +99,9 @@ Last updated: 2026-09-23
 
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Complete the real-device plan against TestFlight build 13 after Apple finishes
-  processing and the build is assigned to the internal group. The
-  optional TestFlight testing notes are still blank. Do not select any older
-  App Store build for review.
+- Complete the real-device plan against TestFlight build 13, which Apple has
+  finished processing and assigned to the internal group. Do not select any
+  older App Store build for review.
 
 ## Required operational launch gates
 

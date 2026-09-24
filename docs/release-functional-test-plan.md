@@ -1,6 +1,6 @@
 # PhotoSpeak release functional test plan
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 This is the owner-facing release checklist. Automated checks cover code and
 server behavior; the items below require a real iPhone, a human voice, Apple
