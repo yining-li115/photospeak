@@ -1,6 +1,6 @@
 # PhotoSpeak App Store launch checklist
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 ## Completed in App Store Connect
 
@@ -81,6 +81,12 @@ Last updated: 2026-09-23
   post-deploy smoke test passed for health, readiness, public legal/support
   pages, and the unauthenticated transcription guard; the public health route
   stayed healthy after the PM2 rolling restart.
+- Repository commit `be54054` was deployed to production on 2026-09-24 after
+  correcting a mobile/server consent-version mismatch. The deploy script
+  completed with exit code 0, including its production smoke test. A bounded
+  live contract probe confirmed that the stale version is rejected with
+  `CONSENT_REQUIRED`, while build 13's `2026-09-22.1` receipt passes consent
+  validation and reaches Apple credential validation.
 - The production dependency audit reports zero known vulnerabilities. The four
   moderate audit findings shown by a full install are confined to development
   tooling and are not present in the production dependency graph.
