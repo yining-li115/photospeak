@@ -8,7 +8,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -25,35 +25,26 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { backendPublicDocumentUrl } from '../../src/api/backend';
 import { useAuth } from '../../src/context/auth';
-import {
-  clearConsentReceipt,
-  readCurrentConsent,
-  recordCurrentConsent,
-} from '../../src/privacy/consent';
 import { colors } from '../../src/theme';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
 export default function WelcomeScreen() {
-  const { loginWithApple } = useAuth();
+  const {
+    consent,
+    acceptCurrentConsent,
+    withdrawCurrentConsent,
+    loginWithApple,
+  } = useAuth();
   const [loading, setLoading] = useState(false);
   const [consentSaving, setConsentSaving] = useState(false);
-  const [hasConsent, setHasConsent] = useState(false);
   const [modalAccepted, setModalAccepted] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [pendingAction, setPendingAction] = useState<'apple' | 'phone' | null>(
     null
   );
 
-  useEffect(() => {
-    let active = true;
-    readCurrentConsent().then((receipt) => {
-      if (active && receipt) setHasConsent(true);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const hasConsent = consent !== null;
 
   function requireAgreement(action: 'apple' | 'phone') {
     if (hasConsent) executeAction(action);
@@ -75,12 +66,10 @@ export default function WelcomeScreen() {
     setConsentSaving(true);
     try {
       if (hasConsent) {
-        await clearConsentReceipt();
-        setHasConsent(false);
+        await withdrawCurrentConsent();
         setModalAccepted(false);
       } else {
-        await recordCurrentConsent();
-        setHasConsent(true);
+        await acceptCurrentConsent();
         setModalAccepted(true);
       }
     } catch {
@@ -94,8 +83,7 @@ export default function WelcomeScreen() {
     if (consentSaving || !modalAccepted) return;
     setConsentSaving(true);
     try {
-      await recordCurrentConsent();
-      setHasConsent(true);
+      await acceptCurrentConsent();
       setShowPrivacy(false);
       if (pendingAction) {
         executeAction(pendingAction);

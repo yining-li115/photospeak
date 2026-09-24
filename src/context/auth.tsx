@@ -13,6 +13,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -40,7 +41,10 @@ import {
 import { clearCurrentOwner, setCurrentOwner } from '../db/owner';
 import {
   clearConsentReceipt,
+  type ConsentReceipt,
   readCurrentConsent,
+  recordCurrentConsent,
+  requireCurrentConsentReceipt,
 } from '../privacy/consent';
 import { setDiagnosticsEnabled } from '../privacy/diagnostics';
 import { shutdownSentry } from '../monitoring/sentry';
@@ -65,6 +69,10 @@ interface AuthState {
   /** Null when logged out; populated after successful login or
    *  after launch-time token validation. */
   user: AuthUser | null;
+  /** Current policy receipt used by both the welcome UI and authentication. */
+  consent: ConsentReceipt | null;
+  acceptCurrentConsent: () => Promise<ConsentReceipt>;
+  withdrawCurrentConsent: () => Promise<void>;
   loginWithApple: (
     identityToken: string,
     authorizationCode: string,
@@ -97,6 +105,24 @@ const STORE_PREVIEW_USER: AuthUser = {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [consent, setConsent] = useState<ConsentReceipt | null>(null);
+  const consentRef = useRef<ConsentReceipt | null>(null);
+
+  const updateConsent = useCallback((receipt: ConsentReceipt | null) => {
+    consentRef.current = receipt;
+    setConsent(receipt);
+  }, []);
+
+  const acceptCurrentConsent = useCallback(async () => {
+    const receipt = await recordCurrentConsent();
+    updateConsent(receipt);
+    return receipt;
+  }, [updateConsent]);
+
+  const withdrawCurrentConsent = useCallback(async () => {
+    await clearConsentReceipt();
+    updateConsent(null);
+  }, [updateConsent]);
 
   // Boot: do we have a stored token? If yes, hit /auth/me to confirm
   // it still works. If /me returns 401, backendRequest already wiped
@@ -155,8 +181,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await retryPendingLocalDeletions();
         // A policy-version bump requires an explicit fresh acceptance before
         // restoring an old session. Do not silently carry consent forward.
-        const consent = await readCurrentConsent();
-        if (!consent) {
+        const storedConsent = await readCurrentConsent();
+        if (!cancelled) updateConsent(storedConsent);
+        if (!storedConsent) {
           await Promise.all([clearSessionTokens(), clearCachedUser()]);
           return;
         }
@@ -229,7 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [updateConsent]);
 
   useEffect(
     () =>
@@ -258,7 +285,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         | { givenName?: string | null; familyName?: string | null }
         | null
     ) => {
-      const consent = await requireCurrentConsent();
+      const acceptedConsent = requireCurrentConsentReceipt(consentRef.current);
       // Prove that no previous account's native queue can survive before the
       // server creates a fresh session family for this login.
       await resetAccountAudioRuntime();
@@ -267,8 +294,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authorizationCode,
         fullName ?? null,
         {
-          consent_version: consent.version,
-          consent_accepted_at: consent.acceptedAt,
+          consent_version: acceptedConsent.version,
+          consent_accepted_at: acceptedConsent.acceptedAt,
         }
       );
       await setSessionTokens(session.access_token, session.refresh_token);
@@ -282,11 +309,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithPhone = useCallback(
     async (phone: string, code: string, nickname?: string) => {
-      const consent = await requireCurrentConsent();
+      const acceptedConsent = requireCurrentConsentReceipt(consentRef.current);
       await resetAccountAudioRuntime();
       const session = await authApi.verify(phone, code, nickname, {
-        consent_version: consent.version,
-        consent_accepted_at: consent.acceptedAt,
+        consent_version: acceptedConsent.version,
+        consent_accepted_at: acceptedConsent.acceptedAt,
       });
       await setSessionTokens(session.access_token, session.refresh_token);
       await setCurrentOwner(session.user.id);
@@ -437,6 +464,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         loading,
         user,
+        consent,
+        acceptCurrentConsent,
+        withdrawCurrentConsent,
         loginWithApple,
         loginWithPhone,
         logout,
@@ -453,14 +483,6 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
   return ctx;
-}
-
-async function requireCurrentConsent() {
-  const consent = await readCurrentConsent();
-  if (!consent) {
-    throw new Error('请先阅读并同意当前用户协议与隐私政策');
-  }
-  return consent;
 }
 
 async function resetAccountAudioRuntime(): Promise<void> {
@@ -635,10 +657,13 @@ async function finishLocalAccountDeletion(
 
   if (clearAuthentication) {
     try {
+      // The policy receipt is device-scoped, not owned by the deleted account.
+      // Clearing it from a late deletion reconciliation can otherwise race a
+      // new login and leave the welcome checkbox out of sync. It is revoked
+      // only by the explicit checkbox action or a policy-version change.
       await Promise.all([
         clearSessionTokens(),
         clearCachedUser(),
-        clearConsentReceipt(),
         setDiagnosticsEnabled(false),
         shutdownSentry(),
       ]);

@@ -34,7 +34,7 @@ Last updated: 2026-09-23
 
 ## Completed in the repository
 
-- Current iOS build number: 12
+- Current iOS build number: 13
 - Export-compliance declaration: `ITSAppUsesNonExemptEncryption = false`
 - Explicit privacy-policy/user-agreement consent gate before sign-in
 - Optional diagnostics are off by default
@@ -44,14 +44,19 @@ Last updated: 2026-09-23
 - TypeScript, lint, mobile policy tests, backend tests, and backend build pass
 - Production landing, health, readiness, privacy, terms, and support routes all
   return HTTP 200
-- Build 12 completed a signed native Xcode archive successfully. Its release
+- Build 13 completed a signed native Xcode archive successfully. Its release
   bundle was checked to contain only `https://api.dailyphotospeak.cn` and no
   legacy HTTP server address.
 - An Apple Distribution certificate was created for the Yiru Li team
 - Xcode Organizer uploaded build 12 to App Store Connect successfully on
   2026-09-23. Apple processing completed and the build was automatically
   assigned to the internal testing group.
-- Build 12 is assigned to the internal testing group and was also installed
+- Build 13 was installed directly on the connected iPhone 17 Pro. The consent
+  UI and authentication now share one policy receipt, preventing an accepted
+  checkbox from diverging from the receipt used for login. The installed
+  version was verified as `1.0.0 (13)` on 2026-09-24.
+- Build 12 is assigned to the internal and external testing groups and was
+  previously installed
   directly on the connected iPhone 17 Pro. The installed version was verified
   as `1.0.0 (12)` on 2026-09-23.
 - Paid Apps Agreement is active, the configured bank account is available, and
@@ -92,7 +97,7 @@ Last updated: 2026-09-23
 
 - Run the real-device checks in
   [`release-functional-test-plan.md`](./release-functional-test-plan.md).
-- Complete the real-device plan against TestFlight build 12 after Apple finishes
+- Complete the real-device plan against TestFlight build 13 after Apple finishes
   processing and the build is assigned to the internal group. The
   optional TestFlight testing notes are still blank. Do not select any older
   App Store build for review.

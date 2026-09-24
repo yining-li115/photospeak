@@ -1,25 +1,26 @@
 import * as SecureStore from 'expo-secure-store';
 
-export const CURRENT_POLICY_VERSION = '2026-09-22.1';
-const CONSENT_KEY = 'privacy_consent_receipt';
+import {
+  CURRENT_POLICY_VERSION,
+  isCurrentConsentReceipt,
+  type ConsentReceipt,
+} from './consent-policy';
 
-export interface ConsentReceipt {
-  version: string;
-  acceptedAt: string;
-}
+export {
+  CURRENT_POLICY_VERSION,
+  isCurrentConsentReceipt,
+  requireCurrentConsentReceipt,
+} from './consent-policy';
+export type { ConsentReceipt } from './consent-policy';
+
+const CONSENT_KEY = 'privacy_consent_receipt';
 
 export async function readCurrentConsent(): Promise<ConsentReceipt | null> {
   try {
     const raw = await SecureStore.getItemAsync(CONSENT_KEY);
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<ConsentReceipt>;
-    if (
-      value.version !== CURRENT_POLICY_VERSION ||
-      typeof value.acceptedAt !== 'string' ||
-      Number.isNaN(Date.parse(value.acceptedAt))
-    ) {
-      return null;
-    }
+    if (!isCurrentConsentReceipt(value)) return null;
     return { version: value.version, acceptedAt: value.acceptedAt };
   } catch {
     return null;

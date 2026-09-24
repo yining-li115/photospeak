@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yining.photospeak",
-      "buildNumber": "12",
+      "buildNumber": "13",
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
