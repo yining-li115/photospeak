@@ -301,25 +301,6 @@ export default function HomeScreen() {
           />
         </Card>
 
-        {stats.streak === 0 && (
-          <Card style={styles.tipCard}>
-            <View style={styles.tipIcon}>
-              <Ionicons
-                name="sparkles-outline"
-                size={18}
-                color={colors.accentText}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>Start your first session</Text>
-              <Text style={styles.tipBody}>
-                Pick a photo, describe it in English for about a minute, and
-                the AI will help you polish it.
-              </Text>
-            </View>
-          </Card>
-        )}
-
         <Card style={styles.plusCard}>
           <View style={styles.plusHeader}>
             <View>
@@ -772,27 +753,6 @@ const styles = StyleSheet.create({
     ...text.body,
     color: colors.textPrimary,
     fontWeight: '700',
-  },
-  tipCard: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    alignItems: 'flex-start',
-  },
-  tipIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.accentBgSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tipTitle: {
-    ...text.cardTitle,
-    marginBottom: 4,
-  },
-  tipBody: {
-    ...text.caption,
-    lineHeight: 19,
   },
   plusCard: {
     backgroundColor: colors.accentBgSoft,
