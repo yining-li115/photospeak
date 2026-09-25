@@ -19,6 +19,7 @@ import {
   backendRequest,
   getAuthSessionEpoch,
 } from './backend';
+import { analysisImageDataUrl } from './image-data-url';
 
 const MAX_TRANSCRIPT_CHARS = 12_000;
 const MAX_QUESTION_CHARS = 1_000;
@@ -291,7 +292,15 @@ async function readPhotoDataUrl(uri: string): Promise<string> {
     }
     const base64 = await file.base64();
     if (!base64) throw new Error('empty file');
-    return `data:image/jpeg;base64,${base64}`;
+    const dataUrl = analysisImageDataUrl(base64);
+    if (!dataUrl) {
+      throw new AiServiceError(
+        '旧照片格式无法识别，请重新选择这张照片',
+        undefined,
+        'PHOTO_FORMAT_UNSUPPORTED'
+      );
+    }
+    return dataUrl;
   } catch (error) {
     if (error instanceof AiServiceError) throw error;
     throw new AiServiceError(

@@ -13,7 +13,7 @@
     "test:db": "node --no-warnings --test scripts/ai-idempotency-policies.test.mjs scripts/sqlite-migrations.test.mjs scripts/srs-policies.test.mjs",
     "test:recording": "node --no-warnings --test scripts/recorder-runtime-reset.test.mjs",
     "test:storage": "node --no-warnings --test scripts/storage-policies.test.mjs",
-    "test:config": "node --no-warnings --experimental-strip-types --test scripts/backend-origin-policy.test.mjs scripts/consent-policy.test.mjs",
+    "test:config": "node --no-warnings --experimental-strip-types --test scripts/backend-origin-policy.test.mjs scripts/consent-policy.test.mjs scripts/image-data-url.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
