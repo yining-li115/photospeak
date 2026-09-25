@@ -276,6 +276,19 @@ export default function HomeScreen() {
                 hitSlop={{ top: 6, bottom: 6, left: 4, right: 8 }}
               >
                 <Text style={styles.greetingName}>{user.nickname}</Text>
+                {isPlus && (
+                  <View
+                    accessibilityLabel="PhotoSpeak Plus 会员"
+                    style={styles.plusBadge}
+                  >
+                    <Ionicons
+                      name="sparkles"
+                      size={10}
+                      color={colors.accentText}
+                    />
+                    <Text style={styles.plusBadgeText}>Plus</Text>
+                  </View>
+                )}
                 <Ionicons
                   name="pencil-outline"
                   size={14}
@@ -768,6 +781,24 @@ const styles = StyleSheet.create({
   greetingName: {
     ...text.greeting,
     color: colors.accent,
+  },
+  plusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accentBgSoft,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.accent,
+  },
+  plusBadgeText: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '800',
+    color: colors.accentText,
+    letterSpacing: 0.2,
   },
   settingsButton: {
     width: 42,
