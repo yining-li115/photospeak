@@ -91,6 +91,8 @@ export type AiProviderErrorKind =
   | 'timeout'
   | 'rate_limited'
   | 'authentication'
+  | 'billing'
+  | 'configuration'
   | 'bad_response'
   | 'unavailable';
 
@@ -98,7 +100,9 @@ export class AiProviderError extends Error {
   constructor(
     public readonly kind: AiProviderErrorKind,
     message: string,
-    public readonly upstreamStatus?: number
+    public readonly upstreamStatus?: number,
+    /** Provider-owned machine code only. Never place upstream messages here. */
+    public readonly upstreamCode?: string
   ) {
     super(message);
     this.name = 'AiProviderError';

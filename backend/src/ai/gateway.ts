@@ -175,7 +175,11 @@ export class AiGateway {
       const result = await this.textProvider.completeText({
         messages: buildAnalyzeMessages(request),
         maxOutputTokens:
-          request.operation === 'session_analysis' ? 12_288 : 4_096,
+          request.operation === 'session_analysis'
+            ? request.mode === 'expand'
+              ? 8_192
+              : 4_096
+            : 4_096,
         temperature: request.operation === 'session_analysis' ? 0.4 : 0.5,
         providerIdempotencyKey: context.providerIdempotencyKey,
       });

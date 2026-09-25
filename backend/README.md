@@ -162,6 +162,8 @@ Provider selection (there are no MiMo defaults or credential fallbacks):
 - `AI_CHAT_PROVIDER`, `AI_CHAT_BASE_URL`, `AI_CHAT_MODEL`,
   `AI_CHAT_AUTH_STYLE`
 - `AI_CHAT_MAX_TOKENS_FIELD` (`max_tokens` or `max_completion_tokens`)
+- `AI_CHAT_THINKING` (`disabled` for PhotoSpeak's low-latency structured
+  coaching requests; `enabled` or `auto` only for models/tasks that need it)
 - `AI_TTS_PROVIDER`, `AI_TTS_ADAPTER` (`volcengine-v3-http` or
   `chat-completions`)
 - For Volcengine V3: `AI_TTS_API_KEY`, `AI_TTS_RESOURCE_ID` (default

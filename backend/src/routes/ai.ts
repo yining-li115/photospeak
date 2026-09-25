@@ -62,6 +62,7 @@ function idempotencyErrorResponse(c: Context, error: AiIdempotencyError) {
     AI_OPERATION_RETRYABLE: 'AI 服务暂时不可用，请稍后重试',
     AI_BUSY: 'AI 服务繁忙，请稍后重试',
     AI_PROVIDER_CONFIGURATION_ERROR: 'AI 服务配置暂时不可用',
+    AI_PROVIDER_BILLING_ERROR: 'AI 服务计费状态暂时不可用',
     AI_COST_CHECK_UNAVAILABLE: 'AI 用量校验暂时不可用，请稍后重试',
     AI_EXECUTION_PREPARATION_FAILED: 'AI 请求准备失败，请稍后重试',
     COST_SAFETY_LIMIT: '今日用量异常，请稍后再试',

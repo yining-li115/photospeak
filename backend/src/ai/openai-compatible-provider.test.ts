@@ -1,21 +1,34 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { OpenAiCompatibleTextProvider } from './openai-compatible-provider.js';
+import {
+  OpenAiCompatibleTextProvider,
+  type OpenAiCompatibleTextProviderConfig,
+} from './openai-compatible-provider.js';
 import {
   MAX_TTS_AUDIO_BYTES,
   validateEncodedAudio,
 } from './speech-audio.js';
 import { AiProviderError } from './types.js';
 
-function provider() {
+function provider(
+  overrides: Partial<OpenAiCompatibleTextProviderConfig> = {}
+) {
   return new OpenAiCompatibleTextProvider({
     name: 'test-provider',
     baseUrl: 'https://provider.invalid/v1',
     apiKey: 'not-a-real-key',
     authStyle: 'bearer',
     model: 'test-chat',
+    ...overrides,
   });
 }
+
+const completionInput = {
+  messages: [{ role: 'user' as const, content: 'hello' }],
+  maxOutputTokens: 10,
+  temperature: 0,
+  providerIdempotencyKey: 'test-operation-key',
+};
 
 test('provider 401 is classified as provider authentication, not user auth', async () => {
   const originalFetch = globalThis.fetch;
@@ -23,14 +36,81 @@ test('provider 401 is classified as provider authentication, not user auth', asy
     new Response('{"error":"bad upstream key"}', { status: 401 });
   try {
     await assert.rejects(
-      provider().completeText({
-        messages: [{ role: 'user', content: 'hello' }],
-        maxOutputTokens: 10,
-        temperature: 0,
-        providerIdempotencyKey: 'test-operation-key',
-      }),
+      provider().completeText(completionInput),
       (error) =>
         error instanceof AiProviderError && error.kind === 'authentication'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider sends the Seed 2.1 completion and thinking controls', async () => {
+  const originalFetch = globalThis.fetch;
+  let body: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_url, init) => {
+    body = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'ok' } }] }),
+      { status: 200 }
+    );
+  };
+  try {
+    await provider({
+      maxTokensField: 'max_completion_tokens',
+      thinking: 'disabled',
+    }).completeText(completionInput);
+    assert.equal(body?.max_completion_tokens, 10);
+    assert.equal(body?.max_tokens, undefined);
+    assert.deepEqual(body?.thinking, { type: 'disabled' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider retains a bounded upstream machine code without its message', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 'InvalidParameter',
+          message: 'private upstream diagnostic must not be propagated',
+        },
+      }),
+      { status: 400 }
+    );
+  try {
+    await assert.rejects(
+      provider().completeText(completionInput),
+      (error) =>
+        error instanceof AiProviderError &&
+        error.kind === 'bad_response' &&
+        error.upstreamStatus === 400 &&
+        error.upstreamCode === 'InvalidParameter' &&
+        !error.message.includes('private upstream')
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider classifies Ark overdue responses separately from credentials', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: { code: 'OperationDenied.ServiceOverdue' },
+      }),
+      { status: 403 }
+    );
+  try {
+    await assert.rejects(
+      provider().completeText(completionInput),
+      (error) =>
+        error instanceof AiProviderError &&
+        error.kind === 'billing' &&
+        error.upstreamCode === 'OperationDenied.ServiceOverdue'
     );
   } finally {
     globalThis.fetch = originalFetch;

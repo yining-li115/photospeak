@@ -143,12 +143,17 @@ export class AiOrchestrator {
       }
       if (
         error instanceof AiProviderError &&
-        (error.kind === 'rate_limited' || error.kind === 'authentication')
+        (error.kind === 'rate_limited' ||
+          error.kind === 'authentication' ||
+          error.kind === 'billing' ||
+          error.kind === 'configuration')
       ) {
         throw new AiExecutionDeferred(
           error.kind === 'rate_limited'
             ? 'AI_BUSY'
-            : 'AI_PROVIDER_CONFIGURATION_ERROR',
+            : error.kind === 'billing'
+              ? 'AI_PROVIDER_BILLING_ERROR'
+              : 'AI_PROVIDER_CONFIGURATION_ERROR',
           503,
           error.kind === 'rate_limited' ? 5 : 60
         );
@@ -185,6 +190,8 @@ function providerErrorPayload(
       code,
       upstreamStatus:
         error instanceof AiProviderError ? error.upstreamStatus : undefined,
+      upstreamCode:
+        error instanceof AiProviderError ? error.upstreamCode : undefined,
     })
   );
   return {

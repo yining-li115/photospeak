@@ -79,6 +79,7 @@ export interface OpenAiCompatibleTextProviderConfig {
   authStyle: 'bearer' | 'api-key';
   model: string;
   maxTokensField?: 'max_tokens' | 'max_completion_tokens';
+  thinking?: 'enabled' | 'disabled' | 'auto';
   timeoutMs?: number;
 }
 
@@ -106,25 +107,77 @@ function authHeader(
     : { 'api-key': apiKey };
 }
 
-function providerErrorForStatus(status: number): AiProviderError {
+const upstreamErrorSchema = z
+  .object({
+    error: z
+      .object({
+        code: z.string().min(1).max(160).optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+function upstreamErrorCode(text: string): string | undefined {
+  try {
+    const code = upstreamErrorSchema.parse(JSON.parse(text)).error?.code;
+    return code && /^[A-Za-z0-9_.-]+$/.test(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function providerErrorForResponse(status: number, text: string): AiProviderError {
+  const code = upstreamErrorCode(text);
+  if (
+    status === 403 &&
+    (code === 'OperationDenied.ServiceOverdue' ||
+      code === 'AccountOverdueError')
+  ) {
+    return new AiProviderError(
+      'billing',
+      'AI provider billing is unavailable',
+      status,
+      code
+    );
+  }
+  if (
+    (status === 403 || status === 404) &&
+    (code === 'OperationDenied.ServiceNotOpen' ||
+      code === 'OperationDenied.PermissionDenied' ||
+      code === 'InvalidEndpointOrModel.NotFound' ||
+      code === 'InvalidEndpointOrModel.ModelIDAccessDisabled' ||
+      code === 'ModelNotOpen' ||
+      code === 'AccessDenied')
+  ) {
+    return new AiProviderError(
+      'configuration',
+      'AI provider model access is unavailable',
+      status,
+      code
+    );
+  }
   if (status === 401 || status === 403) {
     return new AiProviderError(
       'authentication',
       'AI provider credentials were rejected',
-      status
+      status,
+      code
     );
   }
   if (status === 429) {
     return new AiProviderError(
       'rate_limited',
       'AI provider rate limit reached',
-      status
+      status,
+      code
     );
   }
   return new AiProviderError(
     status >= 500 ? 'unavailable' : 'bad_response',
     `AI provider returned HTTP ${status}`,
-    status
+    status,
+    code
   );
 }
 
@@ -156,12 +209,17 @@ export class OpenAiCompatibleTextProvider implements TextAiProvider {
           [this.config.maxTokensField ?? 'max_completion_tokens']:
             input.maxOutputTokens,
           temperature: input.temperature,
+          ...(this.config.thinking
+            ? { thinking: { type: this.config.thinking } }
+            : {}),
         }),
       },
       this.config.timeoutMs ?? 60_000
     );
     const text = await readTextBounded(response, 2 * 1024 * 1024);
-    if (!response.ok) throw providerErrorForStatus(response.status);
+    if (!response.ok) {
+      throw providerErrorForResponse(response.status, text);
+    }
 
     let parsed: z.infer<typeof textResponseSchema>;
     try {
@@ -226,7 +284,9 @@ export class ChatCompletionsSpeechProvider implements SpeechAiProvider {
       this.config.timeoutMs ?? 60_000
     );
     const text = await readTextBounded(response, MAX_TTS_RESPONSE_BYTES);
-    if (!response.ok) throw providerErrorForStatus(response.status);
+    if (!response.ok) {
+      throw providerErrorForResponse(response.status, text);
+    }
 
     let parsed: z.infer<typeof speechResponseSchema>;
     try {

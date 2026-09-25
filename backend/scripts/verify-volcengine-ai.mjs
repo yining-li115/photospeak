@@ -46,10 +46,14 @@ try {
         : 'bearer',
     model: process.env.AI_CHAT_MODEL.trim(),
     maxTokensField:
-      process.env.AI_CHAT_MAX_TOKENS_FIELD?.trim() ===
-      'max_completion_tokens'
-        ? 'max_completion_tokens'
-        : 'max_tokens',
+      process.env.AI_CHAT_MAX_TOKENS_FIELD?.trim() === 'max_tokens'
+        ? 'max_tokens'
+        : 'max_completion_tokens',
+    thinking:
+      process.env.AI_CHAT_THINKING?.trim() === 'enabled' ||
+      process.env.AI_CHAT_THINKING?.trim() === 'auto'
+        ? process.env.AI_CHAT_THINKING.trim()
+        : 'disabled',
     timeoutMs: timeout,
   });
 

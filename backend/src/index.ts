@@ -140,6 +140,19 @@ function readEnv(): Env {
     if (!e[k]) throw new Error(`Missing required env var: ${k}`);
   }
   const chatProviderName = required('AI_CHAT_PROVIDER');
+  const chatModel = required('AI_CHAT_MODEL');
+  const isModernArkSeed =
+    chatProviderName === 'volcengine-ark' &&
+    /^doubao-seed-(?:2-|evolving)/.test(chatModel);
+  const chatThinking = e.AI_CHAT_THINKING?.trim();
+  if (
+    chatThinking &&
+    chatThinking !== 'enabled' &&
+    chatThinking !== 'disabled' &&
+    chatThinking !== 'auto'
+  ) {
+    throw new Error(`Invalid AI_CHAT_THINKING: ${chatThinking}`);
+  }
   const speechProviderName = required('AI_TTS_PROVIDER');
   const asrProviderName = required('AI_ASR_PROVIDER');
   if (asrProviderName !== 'volcengine-seed') {
@@ -312,12 +325,17 @@ function readEnv(): Env {
       baseUrl: requiredHttpsUrl('AI_CHAT_BASE_URL'),
       apiKey: required('AI_CHAT_API_KEY'),
       authStyle: authStyle(e.AI_CHAT_AUTH_STYLE),
-      model: required('AI_CHAT_MODEL'),
+      model: chatModel,
       maxTokensField:
         e.AI_CHAT_MAX_TOKENS_FIELD === 'max_tokens' ||
         e.AI_CHAT_MAX_TOKENS_FIELD === 'max_completion_tokens'
           ? e.AI_CHAT_MAX_TOKENS_FIELD
-          : 'max_tokens',
+          : isModernArkSeed
+            ? 'max_completion_tokens'
+            : 'max_tokens',
+      thinking:
+        (chatThinking as 'enabled' | 'disabled' | 'auto' | undefined) ??
+        (isModernArkSeed ? 'disabled' : undefined),
       timeoutMs: positiveInt(e.AI_CHAT_TIMEOUT_MS, 60_000),
     },
     speechAi,
