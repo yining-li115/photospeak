@@ -51,4 +51,5 @@ fi
 # Trust the deployment program stored in the verified GitHub revision. The SSH
 # client supplies only the SHA; arbitrary stdin is never executed.
 git -C "$REPO_DIR" show "$target_commit:backend/scripts/deploy.sh" |
-  PHOTOSPEAK_REPO_DIR="$REPO_DIR" bash -s -- --commit "$target_commit"
+  PHOTOSPEAK_REPO_DIR="$REPO_DIR" PHOTOSPEAK_FETCH_VERIFIED=1 \
+    bash -s -- --commit "$target_commit"

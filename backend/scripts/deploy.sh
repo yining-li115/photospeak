@@ -113,7 +113,12 @@ fetch_origin() {
   return 1
 }
 
-fetch_origin
+# The forced-command wrapper already fetched and proved that the requested SHA
+# is the current origin/main. Avoid a second outbound GitHub fetch on that path;
+# standalone/manual deploys still fetch and verify for themselves.
+if [[ "${PHOTOSPEAK_FETCH_VERIFIED:-0}" != "1" ]]; then
+  fetch_origin
+fi
 ORIGIN_MAIN=$(git rev-parse origin/main)
 if [[ -n "$TARGET_COMMIT" ]]; then
   [[ "$TARGET_COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]] || {
