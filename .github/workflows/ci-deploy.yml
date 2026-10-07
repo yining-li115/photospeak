@@ -1,0 +1,132 @@
+name: Verify and deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: photospeak-production
+  cancel-in-progress: false
+
+jobs:
+  mobile:
+    name: Verify mobile app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Test local database policies
+        run: npm run test:db
+
+      - name: Test recording policies
+        run: npm run test:recording
+
+      - name: Test storage policies
+        run: npm run test:storage
+
+      - name: Test public configuration policies
+        run: npm run test:config
+
+  backend:
+    name: Verify backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run backend tests
+        run: npm test
+
+      - name: Build production backend
+        run: npm run build
+
+  deploy:
+    name: Deploy to Alibaba Cloud
+    needs:
+      - mobile
+      - backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+
+      - name: Prepare pinned SSH identity
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${PROD_SSH_PRIVATE_KEY:?missing PROD_SSH_PRIVATE_KEY GitHub secret}"
+          : "${PROD_SSH_KNOWN_HOSTS:?missing PROD_SSH_KNOWN_HOSTS GitHub secret}"
+          install -m 700 -d "$RUNNER_TEMP/photospeak-ssh"
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/photospeak-ssh/id_ed25519"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/photospeak-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/photospeak-ssh/id_ed25519"
+          chmod 600 "$RUNNER_TEMP/photospeak-ssh/known_hosts"
+
+      - name: Deploy the exact verified commit
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          : "${PROD_SSH_HOST:?missing PROD_SSH_HOST GitHub secret}"
+          : "${PROD_SSH_USER:?missing PROD_SSH_USER GitHub secret}"
+          ssh_port="${PROD_SSH_PORT:-22}"
+
+          [[ "$ssh_port" =~ ^[0-9]{1,5}$ ]] || {
+            echo "PROD_SSH_PORT must be numeric" >&2
+            exit 2
+          }
+          ssh \
+            -i "$RUNNER_TEMP/photospeak-ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/photospeak-ssh/known_hosts" \
+            -o ConnectTimeout=15 \
+            -p "$ssh_port" \
+            "$PROD_SSH_USER@$PROD_SSH_HOST" \
+            "photospeak-deploy $GITHUB_SHA"

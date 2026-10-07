@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 #
-# PhotoSpeak backend deploy script. Run on the production LAS via SSH:
+# PhotoSpeak backend deploy script. Run on the production LAS via SSH, or
+# stream this exact file over SSH from GitHub Actions:
 #
 #   cd /opt/photospeak/backend && ./scripts/deploy.sh
+#   PHOTOSPEAK_REPO_DIR=/opt/photospeak bash -s -- --commit <sha> < scripts/deploy.sh
 #
 # What it does, in order:
-#   1. Records the current commit (rollback target).
-#   2. Tags the new commit before deploying (so you can always
-#      `git checkout deploy-<timestamp>` later).
-#   3. git pull (fast-forward only, never merges).
+#   1. Takes an exclusive deployment lock and records the rollback target.
+#   2. Fetches origin and checks out the exact tested commit.
 #   4. npm ci (lockfile-exact dependencies).
 #   5. npm run build — TypeScript compile.
 #   6. Stops the old process (short maintenance window; no mixed protocol).
-#   7. npm run db:migrate — Drizzle migrations.
+#   7. Runs Drizzle only when migration files changed (or a previous migration
+#      deploy was interrupted).
 #   8. Restarts PM2 with only the new code, then runs smoke-test.sh.
+#   9. Records a local successful-deploy tag.
 #
-# Database migrations are forward-only. Before migration starts, build failures
-# can roll code back automatically. After it starts, this script fails closed
-# and requires a forward fix; it never starts an auth-incompatible old process
-# against the new schema/semantics.
+# Code-only releases roll back automatically if build, restart, readiness, or
+# smoke tests fail. Database migrations are forward-only. After a migration
+# attempt starts, this script fails closed and requires a forward fix; it never
+# starts auth-incompatible old code against new schema/semantics.
 #
 # Usage:
 #   ./scripts/deploy.sh                      # deploy origin/main
+#   ./scripts/deploy.sh --commit <sha>       # deploy an exact main ancestor
 #   ./scripts/deploy.sh --skip-smoke         # skip post-deploy smoke
 #   ./scripts/deploy.sh --no-migrate         # skip migrations
 #
@@ -34,21 +37,52 @@ set -euo pipefail
 SKIP_SMOKE=0
 NO_MIGRATE=0
 MIGRATIONS_STARTED=0
+MIGRATIONS_REQUIRED=0
 SERVICE_STOPPED=0
 PM2_NAME="${PM2_NAME:-photospeak-api}"
+TARGET_COMMIT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --commit)
+      [[ $# -ge 2 ]] || { echo "--commit requires a git SHA" >&2; exit 2; }
+      TARGET_COMMIT="$2"
+      shift 2
+      ;;
     --skip-smoke) SKIP_SMOKE=1; shift ;;
     --no-migrate) NO_MIGRATE=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 
-# Resolve repo root regardless of where the script was invoked from.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_DIR="$(cd "$BACKEND_DIR/.." && pwd)"
+# Resolve repo root regardless of where the script was invoked from. CI streams
+# this script over SSH, so it supplies an explicit production checkout path.
+if [[ -n "${PHOTOSPEAK_REPO_DIR:-}" ]]; then
+  REPO_DIR="$(cd "$PHOTOSPEAK_REPO_DIR" && pwd)"
+  BACKEND_DIR="$REPO_DIR/backend"
+  SCRIPT_DIR="$BACKEND_DIR/scripts"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+  REPO_DIR="$(cd "$BACKEND_DIR/.." && pwd)"
+fi
+
+[[ -d "$REPO_DIR/.git" && -f "$BACKEND_DIR/package.json" ]] || {
+  echo "✗ PHOTOSPEAK_REPO_DIR is not a PhotoSpeak checkout: $REPO_DIR" >&2
+  exit 2
+}
+
+DEPLOY_STATE_DIR="${PHOTOSPEAK_DEPLOY_STATE_DIR:-$REPO_DIR/.deploy-state}"
+MIGRATION_SENTINEL="$DEPLOY_STATE_DIR/migration-in-progress"
+DEPLOY_LOCK_FILE="${PHOTOSPEAK_DEPLOY_LOCK_FILE:-/tmp/photospeak-deploy.lock}"
+mkdir -p "$DEPLOY_STATE_DIR"
+
+# Never let two pushes mutate the same checkout/process concurrently.
+exec 9>"$DEPLOY_LOCK_FILE"
+if ! flock -n 9; then
+  echo "✗ another PhotoSpeak deployment is already running" >&2
+  exit 1
+fi
 
 cd "$REPO_DIR"
 
@@ -56,18 +90,48 @@ PREV_COMMIT=$(git rev-parse HEAD)
 echo "▶ deploy starting"
 echo "  · prev commit: $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 
-# Annotated deploy tags require an identity. Validate before pulling so a
-# missing server-local Git config cannot leave the checkout updated while the
-# deployment itself never proceeds.
-if [[ -z "$(git config user.name)" || -z "$(git config user.email)" ]]; then
-  echo "✗ repository Git user.name/user.email must be configured before deploy" >&2
-  exit 2
+# Refuse to destroy server-side edits. Generated/ignored files are allowed.
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "✗ production checkout has tracked local changes; refusing deployment" >&2
+  git status --short --untracked-files=no >&2
+  exit 1
 fi
 
-# ─── pull ───────────────────────────────────────────────────────
-git fetch origin --tags
-git pull --ff-only origin main
-NEW_COMMIT=$(git rev-parse HEAD)
+# ─── fetch exact tested revision ────────────────────────────────
+git fetch --prune origin main --tags
+ORIGIN_MAIN=$(git rev-parse origin/main)
+if [[ -n "$TARGET_COMMIT" ]]; then
+  [[ "$TARGET_COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]] || {
+    echo "✗ --commit must be a 7-40 character hexadecimal git SHA" >&2
+    exit 2
+  }
+  git cat-file -e "$TARGET_COMMIT^{commit}" 2>/dev/null || {
+    echo "✗ requested commit is not available after fetching origin/main" >&2
+    exit 1
+  }
+  NEW_COMMIT=$(git rev-parse "$TARGET_COMMIT^{commit}")
+  git merge-base --is-ancestor "$NEW_COMMIT" "$ORIGIN_MAIN" || {
+    echo "✗ refusing to deploy a commit that is not on origin/main" >&2
+    exit 1
+  }
+else
+  NEW_COMMIT="$ORIGIN_MAIN"
+fi
+
+if [[ -f "$MIGRATION_SENTINEL" ]]; then
+  MIGRATIONS_REQUIRED=1
+  echo "  ! interrupted migration deployment detected; migrations must be retried"
+elif [[ "$PREV_COMMIT" != "$NEW_COMMIT" ]] && \
+     ! git diff --quiet "$PREV_COMMIT" "$NEW_COMMIT" -- backend/drizzle; then
+  MIGRATIONS_REQUIRED=1
+fi
+
+if [[ "$NO_MIGRATE" -eq 1 && -f "$MIGRATION_SENTINEL" ]]; then
+  echo "✗ --no-migrate is forbidden while an interrupted migration marker exists" >&2
+  exit 1
+fi
+
+git checkout --detach "$NEW_COMMIT"
 
 if [[ "$PREV_COMMIT" == "$NEW_COMMIT" ]]; then
   # A prior attempt may have pulled successfully and then failed before build,
@@ -77,17 +141,12 @@ else
   echo "  · new commit:  $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 fi
 
-# Tag this deploy so future rollbacks are explicit.
-TAG="deploy-$(date -u +%Y%m%d-%H%M%S)"
-git tag -a "$TAG" -m "deploy from $(git log -1 --format='%s')"
-echo "  · tagged $TAG"
-
 # ─── build ──────────────────────────────────────────────────────
 cd "$BACKEND_DIR"
 
 rollback() {
   local reason="$1"
-  if [[ "$MIGRATIONS_STARTED" -eq 1 ]]; then
+  if [[ "$MIGRATIONS_STARTED" -eq 1 || -f "$MIGRATION_SENTINEL" ]]; then
     echo "✗ $reason" >&2
     echo "  ! migration execution has started; automatic old-code rollback is disabled" >&2
     echo "  ! apply a forward fix, then restart and rerun smoke tests" >&2
@@ -96,12 +155,22 @@ rollback() {
   fi
   echo "✗ $reason — rolling application code back to $PREV_COMMIT" >&2
   cd "$REPO_DIR"
-  git reset --hard "$PREV_COMMIT"
+  git checkout --detach "$PREV_COMMIT"
   cd "$BACKEND_DIR"
-  npm ci
-  npm run build
+  npm ci || { echo "✗ rollback npm ci failed" >&2; exit 1; }
+  npm run build || { echo "✗ rollback build failed" >&2; exit 1; }
   if [[ "$SERVICE_STOPPED" -eq 1 ]]; then
-    pm2 restart "$PM2_NAME" --update-env
+    pm2 restart "$PM2_NAME" --update-env || {
+      echo "✗ rollback restart failed" >&2
+      exit 1
+    }
+    sleep 2
+    if [[ "$SKIP_SMOKE" -eq 0 ]]; then
+      "$SCRIPT_DIR/smoke-test.sh" || {
+        echo "✗ rollback smoke test failed; service needs manual intervention" >&2
+        exit 1
+      }
+    fi
   fi
   echo "✗ rolled back to $(git rev-parse --short HEAD); deploy aborted" >&2
   exit 1
@@ -122,12 +191,15 @@ echo "  · pm2 stop $PM2_NAME (maintenance window)..."
 pm2 stop "$PM2_NAME" || rollback "pm2 stop failed"
 SERVICE_STOPPED=1
 
-if [[ "$NO_MIGRATE" -eq 0 ]]; then
+if [[ "$NO_MIGRATE" -eq 0 && "$MIGRATIONS_REQUIRED" -eq 1 ]]; then
   echo "  · npm run db:migrate..."
   # Mark before execution because a failed runner may already have committed
   # one or more forward migrations.
   MIGRATIONS_STARTED=1
+  printf '%s\n' "$NEW_COMMIT" > "$MIGRATION_SENTINEL"
   npm run db:migrate || rollback "db:migrate failed (database changes, if any, were not reversed)"
+else
+  echo "  · no migration changes; skipping db:migrate"
 fi
 
 # ─── start ──────────────────────────────────────────────────────
@@ -144,4 +216,10 @@ if [[ "$SKIP_SMOKE" -eq 0 ]]; then
   fi
 fi
 
+rm -f "$MIGRATION_SENTINEL"
+
+# Lightweight tags need no server-side author identity and contain no agent
+# attribution. They exist only in the production clone as rollback markers.
+TAG="deploy-success-$(date -u +%Y%m%d-%H%M%S)"
+git tag "$TAG" "$NEW_COMMIT"
 echo "✓ deployed $(git rev-parse --short HEAD) ($TAG)"

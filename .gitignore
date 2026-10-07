@@ -57,3 +57,6 @@ ChatGPT Image*.jpg
 *.pdf
 logo_ps.png
 mimo.pdf
+
+# production deployment state (server-local, never committed)
+.deploy-state/
