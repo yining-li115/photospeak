@@ -26,7 +26,22 @@ fi
   exit 1
 }
 
-git -C "$REPO_DIR" fetch --prune origin main --tags
+fetch_origin() {
+  local attempt
+  for attempt in 1 2 3; do
+    if GIT_TERMINAL_PROMPT=0 git -C "$REPO_DIR" fetch --prune origin main --tags; then
+      return 0
+    fi
+    if [[ "$attempt" -lt 3 ]]; then
+      echo "origin fetch failed (attempt $attempt/3); retrying..." >&2
+      sleep $((attempt * 2))
+    fi
+  done
+  echo "origin fetch failed after 3 attempts" >&2
+  return 1
+}
+
+fetch_origin
 origin_main="$(git -C "$REPO_DIR" rev-parse origin/main)"
 if [[ "$target_commit" != "$origin_main" ]]; then
   echo "deployment commit is not the current origin/main" >&2

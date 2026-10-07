@@ -98,7 +98,22 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 # ─── fetch exact tested revision ────────────────────────────────
-git fetch --prune origin main --tags
+fetch_origin() {
+  local attempt
+  for attempt in 1 2 3; do
+    if GIT_TERMINAL_PROMPT=0 git fetch --prune origin main --tags; then
+      return 0
+    fi
+    if [[ "$attempt" -lt 3 ]]; then
+      echo "  ! origin fetch failed (attempt $attempt/3); retrying..." >&2
+      sleep $((attempt * 2))
+    fi
+  done
+  echo "✗ origin fetch failed after 3 attempts" >&2
+  return 1
+}
+
+fetch_origin
 ORIGIN_MAIN=$(git rev-parse origin/main)
 if [[ -n "$TARGET_COMMIT" ]]; then
   [[ "$TARGET_COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]] || {
